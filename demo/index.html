@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>mini-game demo</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0d0d0d; display: flex; flex-direction: column;
+           align-items: center; justify-content: center; height: 100vh; gap: 6px; }
+    canvas { display: block; image-rendering: pixelated; }
+    #hud { color: #555; font: 10px monospace; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="hud"></div>
+
+  <script type="module">
+    import {
+      loop, canvas, input, mouse, scene, currentScene, pool,
+      body, aabb, move, applyGravity,
+      camera as makeCamera,
+      hud, menu, dialog,
+    } from '../index.js';
+    import { effect } from '../../mini-react/src/core.js';
+
+    // ── canvas + input ────────────────────────────────────────────────────────
+    canvas.init('#c', { width: 480, height: 270, pixelated: true });
+    const ctx = canvas.ctx;
+    input.init(canvas.el);   // keyboard always on window internally
+
+    // ── world geometry ────────────────────────────────────────────────────────
+    const WORLD_W = 600;
+    const platforms = [
+      { x: -50, y: 244, w: 700, h: 30 },             // ground
+      { x: 80,  y: 195, w: 80,  h: 8, oneWay: true },
+      { x: 240, y: 165, w: 80,  h: 8, oneWay: true },
+      { x: 400, y: 130, w: 80,  h: 8, oneWay: true },
+      { x: -20, y: 150, w: 80,  h: 8, oneWay: true },
+    ];
+
+    // ── player ────────────────────────────────────────────────────────────────
+    const SPEED = 150, JUMP_V = -320;
+    const player = body({ x: 60, y: 210, w: 12, h: 14, friction: 0.85, restitution: 0 });
+    let hp = 5;
+
+    // bullet pool
+    const bullets = pool(64, () => ({ x:0, y:0, vx:0, vy:0, active:false }), o => {
+      o.x = o.y = o.vx = o.vy = 0;
+    });
+    let shootCd = 0;
+
+    // ── camera ────────────────────────────────────────────────────────────────
+    const cam = makeCamera({
+      w: canvas.w, h: canvas.h,
+      lerp: 0.04,
+      bounds: { x: 0, y: 0, w: WORLD_W, h: 270 },
+    });
+    cam.follow(player);
+
+    // ── UI instances ──────────────────────────────────────────────────────────
+    const dlg = dialog({ canvasH: canvas.h, w: 300, h: 52, x: 90 });
+    let dlgShown = false;
+
+    // pause menu (constructed once, reused)
+    const pauseMenu = menu({
+      items: [
+        { label: 'Resume',  action: () => scene.pop() },
+        { label: 'Restart', action: () => { scene.pop(); scene.go('play'); } },
+      ],
+      x: canvas.w / 2, y: canvas.h / 2 + 10,
+      itemW: 120, itemH: 20, gap: 6,
+      colorActiveBg: 'rgba(255,255,255,0.12)',
+    });
+
+    // ── scenes ────────────────────────────────────────────────────────────────
+    scene.define('play', {
+      enter() {
+        Object.assign(player, { x: 60, y: 210, vx: 0, vy: 0 });
+        hp = 5;
+        bullets.all.forEach(b => b.active = false);
+        cam.teleport(canvas.w / 2, canvas.h / 2);
+        dlgShown = false;
+      },
+
+      update(dt) {
+        // dialog absorbs input when open
+        if (dlg.isOpen) { dlg.update(dt); input.flush(); return; }
+
+        // show intro dialog once on ground
+        if (!dlgShown && player.grounded) {
+          dlgShown = true;
+          dlg.show('Use WASD to move, Space to jump, click to shoot!',
+            { speaker: 'Tutorial', ctx });
+        }
+
+        // movement
+        applyGravity(player, dt);
+        const ax = input.axisX();
+        player.vx = ax * SPEED;
+        if (input.down('jump') && player.grounded) {
+          player.vy = JUMP_V;
+          cam.shake(0.15, 3);
+        }
+        move(player, dt, platforms);
+
+        // wrap world
+        if (player.x + player.w < 0)  player.x = WORLD_W;
+        if (player.x > WORLD_W)       player.x = -player.w;
+
+        // shoot
+        shootCd -= dt;
+        if ((mouse.justDown.value || input.down('action')) && shootCd <= 0) {
+          const b = bullets.obtain();
+          if (b) {
+            const cx = player.x + player.w / 2, cy = player.y + player.h / 2;
+            const wm = cam.screenToWorld(mouse.x.value, mouse.y.value);
+            const dx = wm.x - cx, dy = wm.y - cy;
+            const len = Math.hypot(dx, dy) || 1;
+            b.x = cx; b.y = cy;
+            b.vx = dx / len * 320; b.vy = dy / len * 320;
+          }
+          shootCd = 0.12;
+          cam.shake(0.08, 1.5);
+        }
+
+        bullets.update(b => {
+          b.x += b.vx * dt; b.y += b.vy * dt;
+          return b.y < 300 && b.x > -100 && b.x < WORLD_W + 100;
+        });
+
+        cam.update(dt);
+        if (input.down('pause')) scene.push('pause');
+        input.flush();
+      },
+
+      render(ctx) {
+        canvas.clear('#1a1a2e');
+
+        cam.begin(ctx);
+
+          // platforms
+          for (const p of platforms) {
+            ctx.fillStyle = p.oneWay ? '#2d6a3f' : '#334';
+            ctx.fillRect(p.x, p.y, p.w, p.h);
+            if (p.oneWay) {   // bright top edge
+              ctx.fillStyle = '#4caf50';
+              ctx.fillRect(p.x, p.y, p.w, 2);
+            }
+          }
+
+          // bullets
+          ctx.fillStyle = '#ffd54f';
+          bullets.forEach(b => {
+            ctx.beginPath();
+            ctx.arc(b.x, b.y, 2, 0, Math.PI * 2);
+            ctx.fill();
+          });
+
+          // player  (brighter when airborne)
+          ctx.fillStyle = player.grounded ? '#4fc3f7' : '#b3e5fc';
+          ctx.fillRect(Math.round(player.x), Math.round(player.y), player.w, player.h);
+
+          // crosshair
+          const wm = cam.screenToWorld(mouse.x.value, mouse.y.value);
+          ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(wm.x-7,wm.y); ctx.lineTo(wm.x+7,wm.y);
+          ctx.moveTo(wm.x,wm.y-7); ctx.lineTo(wm.x,wm.y+7);
+          ctx.stroke();
+
+        cam.end(ctx);
+
+        // ── screen-space HUD ─────────────────────────────────────────────────
+        // hp bar
+        hud.bar(ctx, 8, 8, 80, 8, hp, 5, { color: '#e53935', radius: 2 });
+        hud.text(ctx, 'HP', 8, 18, { font: '8px monospace', color: '#888' });
+
+        // bullet count
+        hud.text(ctx, `${bullets.active}/${bullets.capacity} bullets`,
+          canvas.w - 4, 8, { font: '9px monospace', color: '#667', align: 'right' });
+
+        // fps
+        hud.text(ctx, `${loop.fps} fps`, canvas.w - 4, 18,
+          { font: '9px monospace', color: '#445', align: 'right' });
+
+        // controls hint (fades after first move — simple: just show always small)
+        hud.text(ctx, 'WASD move · Space jump · Click shoot · Esc pause',
+          canvas.w / 2, canvas.h - 10,
+          { font: '8px monospace', color: '#334', align: 'center' });
+
+        // dialog
+        dlg.render(ctx);
+      },
+    });
+
+    scene.define('pause', {
+      update(dt) {
+        pauseMenu.update(dt);
+        input.flush();
+      },
+      render(ctx) {
+        // dim (re-render play underneath happens via scene stack)
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillRect(0, 0, canvas.w, canvas.h);
+
+        hud.text(ctx, 'PAUSED', canvas.w/2, canvas.h/2 - 30,
+          { font: 'bold 18px monospace', color: '#fff', align: 'center' });
+
+        pauseMenu.render(ctx);
+      },
+    });
+
+    // ── reactive status bar ────────────────────────────────────────────────────
+    const statusEl = document.getElementById('hud');
+    effect(() => {
+      statusEl.textContent = `scene: ${currentScene.value}`;
+    });
+    setInterval(() => {
+      statusEl.textContent =
+        `fps: ${loop.fps}  scene: ${currentScene.value}  ` +
+        `cam: (${Math.round(cam.x)},${Math.round(cam.y)})  ` +
+        `grounded: ${player.grounded}  bullets: ${bullets.active}`;
+    }, 300);
+
+    // ── start ──────────────────────────────────────────────────────────────────
+    scene.go('play');
+    loop.start(
+      dt    => scene.update(dt),
+      alpha => scene.render(ctx, alpha)
+    );
+  </script>
+</body>
+</html>

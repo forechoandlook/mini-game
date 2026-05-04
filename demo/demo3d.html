@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>mini-game 3D demo</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { background:#000; display:flex; flex-direction:column; align-items:center;
+           justify-content:center; height:100vh; gap:6px; }
+    canvas { display:block; cursor:crosshair; }
+    #info { color:#444; font:10px monospace; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="info">Click canvas to lock pointer · WASD move · mouse look · scroll zoom</div>
+
+  <script type="module">
+    import { loop, input, mouse, audio,
+             renderer as makeRenderer, camera3d, m4, v3, DEG,
+             box, sphere, plane, cylinder } from '../index.js';
+
+    // ── Setup ─────────────────────────────────────────────────────────────────
+    const canvas = document.getElementById('c');
+    canvas.width = 640; canvas.height = 360;
+
+    const r   = makeRenderer(canvas);
+    const cam = camera3d({ fov: 60*DEG, aspect: 640/360, near: 0.05, far: 500, mode: 'fps' });
+    cam.setPos(0, 1.6, 4);
+
+    input.init(canvas);
+
+    // ── Geometry ──────────────────────────────────────────────────────────────
+    const floorGeo  = r.geometry(...Object.values(plane(20, 20, 10, 10)));
+    const boxGeo    = r.geometry(...Object.values(box(1, 1, 1)));
+    const sphereGeo = r.geometry(...Object.values(sphere(0.5, 24, 16)));
+    const cylGeo    = r.geometry(...Object.values(cylinder(0.4, 1.5, 16)));
+
+    // ── Materials ─────────────────────────────────────────────────────────────
+    const matFloor  = r.material(null, { u_albedo: [0.3, 0.35, 0.4, 1] });
+    const matBox    = r.material(null, { u_albedo: [0.8, 0.3, 0.2, 1] });
+    const matSphere = r.material(null, { u_albedo: [0.3, 0.7, 0.9, 1] });
+    const matCyl    = r.material(null, { u_albedo: [0.4, 0.8, 0.4, 1] });
+    const matLight  = r.unlitMaterial([1, 0.95, 0.6, 1]);
+
+    // ── Meshes ────────────────────────────────────────────────────────────────
+    const floor  = r.mesh(floorGeo,  matFloor);
+    const cube   = r.mesh(boxGeo,    matBox);
+    const ball   = r.mesh(sphereGeo, matSphere);
+    const pillar = r.mesh(cylGeo,    matCyl);
+    const light  = r.mesh(sphereGeo, matLight);  // visible light source
+
+    // ── Matrices (pre-allocated) ──────────────────────────────────────────────
+    const mFloor  = m4.new(); m4.identity(mFloor);
+    const mCube   = m4.new();
+    const mBall   = m4.new();
+    const mPillar = m4.new(); m4.translation(mPillar, 3, 0.75, -2);
+    const mLight  = m4.new();
+    const _tmp    = m4.new();
+
+    // ── Pointer lock for mouse look ───────────────────────────────────────────
+    let _locked = false;
+    canvas.addEventListener('click', () => canvas.requestPointerLock());
+    document.addEventListener('pointerlockchange', () => {
+      _locked = document.pointerLockElement === canvas;
+    });
+    document.addEventListener('mousemove', e => {
+      if (_locked) cam.rotateFPS(e.movementX, e.movementY, 0.0015);
+    });
+    canvas.addEventListener('wheel', e => {
+      // zoom via fov when not locked
+      if (!_locked) cam.zoom(e.deltaY, 0.001);
+    }, { passive: true });
+
+    // orbit drag fallback when not locked
+    let _drag = false, _lastX = 0, _lastY = 0;
+    canvas.addEventListener('mousedown', e => { _drag = true; _lastX=e.clientX; _lastY=e.clientY; });
+    document.addEventListener('mouseup',  () => _drag = false);
+    document.addEventListener('mousemove', e => {
+      if (_drag && !_locked) cam.rotateFPS(e.clientX-_lastX, e.clientY-_lastY, 0.005);
+      _lastX=e.clientX; _lastY=e.clientY;
+    });
+
+    // ── Audio: procedural beeps ───────────────────────────────────────────────
+    let _pingCd = 0;
+
+    // ── Game loop ─────────────────────────────────────────────────────────────
+    let t = 0;
+    loop.start(
+      dt => {
+        t += dt;
+        _pingCd -= dt;
+
+        // WASD movement
+        cam.moveFPS({
+          moveX:  input.axisX(),
+          moveZ:  input.axisY(),
+          moveY:  (input.pressed('action') ? 1 : 0) - (input.pressed('down') ? 1 : 0),
+          speed:  4, dt,
+        });
+
+        // ambient audio ping
+        if (_pingCd <= 0) {
+          audio.tone(220 + Math.random()*440, { type:'sine', duration:0.3, volume:0.05 });
+          _pingCd = 3 + Math.random() * 2;
+        }
+
+        input.flush();
+      },
+
+      _alpha => {
+        r.begin([0.04, 0.04, 0.08, 1]);
+        r.setCamera(cam.view, cam.proj);
+
+        // animated light position
+        const lx = Math.cos(t * 0.7) * 4;
+        const ly = 2.5 + Math.sin(t * 1.1) * 0.5;
+        const lz = Math.sin(t * 0.7) * 4;
+        r.setLight({ dir: v3.new(-lx, -ly, -lz), color: v3.new(1,0.95,0.85), ambient: v3.new(0.1,0.1,0.15) });
+
+        // floor
+        r.draw(floor, mFloor);
+
+        // spinning cube
+        m4.identity(_tmp);
+        m4.mul(mCube, m4.translation(_tmp, -2, 0.5, -3), m4.rotY(_tmp, t));
+        r.draw(cube, mCube);
+
+        // bouncing ball
+        m4.translation(mBall, 0, 0.5 + Math.abs(Math.sin(t*2)) * 1.5, -3);
+        r.draw(ball, mBall);
+
+        // pillar (static)
+        r.draw(pillar, mPillar);
+
+        // small sphere at light position (unlit, always bright)
+        m4.translation(mLight, lx, ly, lz);
+        m4.mul(mLight, mLight, m4.scale(_tmp, 0.15, 0.15, 0.15));
+        r.draw(light, mLight);
+
+        r.end();
+
+        // 2D overlay (fps)
+        const info = document.getElementById('info');
+        info.textContent = _locked
+          ? `fps: ${loop.fps} | WASD move | Esc to unlock | t=${t.toFixed(1)}s`
+          : `fps: ${loop.fps} | Click to lock pointer for FPS look`;
+      }
+    );
+  </script>
+</body>
+</html>
