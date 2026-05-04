@@ -2,107 +2,215 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>mini-game 3D demo</title>
+  <title>mini-game 3D — physics</title>
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
-    body { background:#000; display:flex; flex-direction:column; align-items:center;
-           justify-content:center; height:100vh; gap:6px; }
+    body { background:#000; display:flex; flex-direction:column;
+           align-items:center; justify-content:center; height:100vh; gap:6px; }
     canvas { display:block; cursor:crosshair; }
-    #info { color:#444; font:10px monospace; }
+    #info { color:#444; font:10px monospace; text-align:center; }
   </style>
 </head>
 <body>
   <canvas id="c"></canvas>
-  <div id="info">Click canvas to lock pointer · WASD move · mouse look · scroll zoom</div>
+  <div id="info"></div>
 
   <script type="module">
     import { loop, input, mouse, audio,
-             renderer as makeRenderer, camera3d, m4, v3, DEG,
+             renderer as makeRenderer, camera3d, physics3d,
+             m4, v3, DEG,
              box, sphere, plane, cylinder } from '../index.js';
 
-    // ── Setup ─────────────────────────────────────────────────────────────────
+    // ── Canvas + renderer ─────────────────────────────────────────────────────
     const canvas = document.getElementById('c');
     canvas.width = 640; canvas.height = 360;
+    const r = makeRenderer(canvas);
 
-    const r   = makeRenderer(canvas);
-    const cam = camera3d({ fov: 60*DEG, aspect: 640/360, near: 0.05, far: 500, mode: 'fps' });
-    cam.setPos(0, 1.6, 4);
+    // ── Camera ────────────────────────────────────────────────────────────────
+    const cam = camera3d({ fov:65*DEG, aspect:640/360, near:0.05, far:300, mode:'fps' });
+    cam.setPos(0, 3, 10);
 
-    input.init(canvas);
+    // ── Physics world ─────────────────────────────────────────────────────────
+    const world = physics3d({ gravity:20, substeps:3 });
 
-    // ── Geometry ──────────────────────────────────────────────────────────────
-    const floorGeo  = r.geometry(...Object.values(plane(20, 20, 10, 10)));
-    const boxGeo    = r.geometry(...Object.values(box(1, 1, 1)));
-    const sphereGeo = r.geometry(...Object.values(sphere(0.5, 24, 16)));
-    const cylGeo    = r.geometry(...Object.values(cylinder(0.4, 1.5, 16)));
+    // static floor + walls
+    const floor = world.body({ shape:'box', type:'static', x:0,y:-0.5,z:0,  hx:15,hy:0.5,hz:15 });
+    world.body({ shape:'box', type:'static', x:-15,y:4,z:0, hx:0.5,hy:5,hz:15 });   // wall L
+    world.body({ shape:'box', type:'static', x: 15,y:4,z:0, hx:0.5,hy:5,hz:15 });   // wall R
+    world.body({ shape:'box', type:'static', x:0,y:4,z:-15, hx:15,hy:5,hz:0.5 });   // wall B
+    // ramp
+    world.body({ shape:'box', type:'static', x:6,y:1.5,z:-4, hx:3,hy:0.25,hz:4,
+                 tag:'ramp' });
 
-    // ── Materials ─────────────────────────────────────────────────────────────
-    const matFloor  = r.material(null, { u_albedo: [0.3, 0.35, 0.4, 1] });
-    const matBox    = r.material(null, { u_albedo: [0.8, 0.3, 0.2, 1] });
-    const matSphere = r.material(null, { u_albedo: [0.3, 0.7, 0.9, 1] });
-    const matCyl    = r.material(null, { u_albedo: [0.4, 0.8, 0.4, 1] });
-    const matLight  = r.unlitMaterial([1, 0.95, 0.6, 1]);
+    // dynamic bodies: mix of boxes and spheres
+    const _dynBodies = [];
+    function spawnBox(x,y,z, hx=0.4,hy=0.4,hz=0.4, color=[0.8,0.3,0.2,1]) {
+      const b = world.body({ shape:'box', x,y,z, hx,hy,hz, restitution:0.3, friction:0.6 });
+      b._color = color;
+      _dynBodies.push(b);
+      return b;
+    }
+    function spawnSphere(x,y,z, r=0.4, color=[0.3,0.7,0.9,1]) {
+      const b = world.body({ shape:'sphere', x,y,z, r, restitution:0.5, friction:0.4 });
+      b._color = color;
+      _dynBodies.push(b);
+      return b;
+    }
 
-    // ── Meshes ────────────────────────────────────────────────────────────────
-    const floor  = r.mesh(floorGeo,  matFloor);
-    const cube   = r.mesh(boxGeo,    matBox);
-    const ball   = r.mesh(sphereGeo, matSphere);
-    const pillar = r.mesh(cylGeo,    matCyl);
-    const light  = r.mesh(sphereGeo, matLight);  // visible light source
+    // initial stack
+    for (let i = 0; i < 5; i++) spawnBox( (i-2)*1.2, 0.4+i*1.0, -3 );
+    for (let i = 0; i < 4; i++) spawnSphere( (i-1.5)*1.5, 4+i*1.2, -5, 0.4 );
+    spawnBox(-4, 2, -2, 1.5, 0.2, 1.5, [0.5,0.8,0.4,1]);  // flat slab
 
-    // ── Matrices (pre-allocated) ──────────────────────────────────────────────
-    const mFloor  = m4.new(); m4.identity(mFloor);
-    const mCube   = m4.new();
-    const mBall   = m4.new();
-    const mPillar = m4.new(); m4.translation(mPillar, 3, 0.75, -2);
-    const mLight  = m4.new();
-    const _tmp    = m4.new();
+    // player body: kinematic box (we drive it, physics resolves collisions)
+    const playerBody = world.body({
+      shape:'box', type:'kinematic', x:0,y:1,z:8, hx:0.4,hy:0.9,hz:0.4, tag:'player'
+    });
 
-    // ── Pointer lock for mouse look ───────────────────────────────────────────
+    // ── Geometry + materials ──────────────────────────────────────────────────
+    const geoFloor   = r.geometry(...Object.values(plane(30,30,16,16)));
+    const geoBox     = r.geometry(...Object.values(box(1,1,1)));
+    const geoSphere  = r.geometry(...Object.values(sphere(1,20,14)));
+    const geoCyl     = r.geometry(...Object.values(cylinder(1,1,16)));
+    const geoWall    = r.geometry(...Object.values(box(1,1,1)));
+
+    const matFloor   = r.material(null, { u_albedo:[0.25,0.28,0.32,1] });
+    const matWall    = r.material(null, { u_albedo:[0.18,0.20,0.25,1] });
+    const matRamp    = r.material(null, { u_albedo:[0.30,0.40,0.30,1] });
+    const matPlayer  = r.material(null, { u_albedo:[0.9,0.85,0.3,1] });
+    const matSleep   = r.material(null, { u_albedo:[0.3,0.3,0.35,1] });
+    const matDynBase = r.material(null, { u_albedo:[1,1,1,1] });  // overridden per-body
+
+    // pre-allocated model matrix + scratch
+    const _model = m4.new();
+    const _scale = m4.new();
+    const _trans = m4.new();
+    const _rot   = m4.new();
+
+    function _bodyMatrix(b, out) {
+      m4.translation(_trans, b.x, b.y, b.z);
+      if (b.shape === 'box') {
+        m4.scale(_scale, b.hx*2, b.hy*2, b.hz*2);
+      } else {
+        m4.scale(_scale, b.r*2, b.r*2, b.r*2);
+      }
+      m4.mul(out, _trans, _scale);
+    }
+
+    // ── Pointer lock ──────────────────────────────────────────────────────────
     let _locked = false;
     canvas.addEventListener('click', () => canvas.requestPointerLock());
     document.addEventListener('pointerlockchange', () => {
       _locked = document.pointerLockElement === canvas;
     });
     document.addEventListener('mousemove', e => {
-      if (_locked) cam.rotateFPS(e.movementX, e.movementY, 0.0015);
-    });
-    canvas.addEventListener('wheel', e => {
-      // zoom via fov when not locked
-      if (!_locked) cam.zoom(e.deltaY, 0.001);
-    }, { passive: true });
-
-    // orbit drag fallback when not locked
-    let _drag = false, _lastX = 0, _lastY = 0;
-    canvas.addEventListener('mousedown', e => { _drag = true; _lastX=e.clientX; _lastY=e.clientY; });
-    document.addEventListener('mouseup',  () => _drag = false);
-    document.addEventListener('mousemove', e => {
-      if (_drag && !_locked) cam.rotateFPS(e.clientX-_lastX, e.clientY-_lastY, 0.005);
-      _lastX=e.clientX; _lastY=e.clientY;
+      if (_locked) cam.rotateFPS(e.movementX, e.movementY, 0.0018);
     });
 
-    // ── Audio: procedural beeps ───────────────────────────────────────────────
-    let _pingCd = 0;
+    // ── Shoot ─────────────────────────────────────────────────────────────────
+    let _shootCd = 0;
+    function shoot() {
+      const fwd = cam.forward;
+      const pos = cam.pos;
+      const b = spawnSphere(pos[0]+fwd[0]*1.2, pos[1]+fwd[1]*1.2, pos[2]+fwd[2]*1.2, 0.25,
+                             [1, 0.6, 0.1, 1]);
+      const FORCE = 28;
+      world.impulse(b, fwd[0]*FORCE, fwd[1]*FORCE, fwd[2]*FORCE);
+      audio.sweep(200, 800, { duration:0.05, volume:0.2 });
+      // remove after 8s
+      setTimeout(() => world.remove(b), 8000);
+    }
 
-    // ── Game loop ─────────────────────────────────────────────────────────────
-    let t = 0;
+    // ── Explosion impulse at raycast hit ──────────────────────────────────────
+    function explode(ox, oy, oz, strength=18, radius=4) {
+      for (const b of world.bodies) {
+        if (b.type !== 'dynamic') continue;
+        const dx=b.x-ox, dy=b.y-oy, dz=b.z-oz;
+        const d = Math.sqrt(dx*dx+dy*dy+dz*dz);
+        if (d > radius || d < 0.01) continue;
+        const f = strength * (1 - d/radius) / b.mass;
+        world.impulse(b, dx/d*f, Math.abs(dy/d*f)+f*0.4, dz/d*f);
+      }
+      audio.noise({ duration:0.3, volume:0.5 });
+    }
+
+    // ── Input ─────────────────────────────────────────────────────────────────
+    input.init(canvas);
+    let _spawnCd = 0;
+
+    // ── Loop ──────────────────────────────────────────────────────────────────
+    let _playerVY = 0;
+    let _playerGrounded = false;
+    const PSPEED = 6, PJUMP = 10;
+
     loop.start(
       dt => {
-        t += dt;
-        _pingCd -= dt;
+        _shootCd  -= dt;
+        _spawnCd  -= dt;
 
-        // WASD movement
-        cam.moveFPS({
-          moveX:  input.axisX(),
-          moveZ:  input.axisY(),
-          moveY:  (input.pressed('action') ? 1 : 0) - (input.pressed('down') ? 1 : 0),
-          speed:  4, dt,
-        });
+        // ── Player movement (kinematic body, we compute velocity manually) ──
+        const ax = input.axisX();
+        const az = input.axisY();
+        const yaw = cam.yaw;
+        const fx = Math.sin(yaw), fz = -Math.cos(yaw);
+        const rx =  fz, rz = -fx;   // right = cross(fwd, up) on XZ
 
-        // ambient audio ping
-        if (_pingCd <= 0) {
-          audio.tone(220 + Math.random()*440, { type:'sine', duration:0.3, volume:0.05 });
-          _pingCd = 3 + Math.random() * 2;
+        let pvx = (fx*(-az) + rx*ax) * PSPEED;
+        let pvz = (fz*(-az) + rz*ax) * PSPEED;
+
+        // gravity on player
+        _playerVY -= 20 * dt;
+        if (_playerGrounded && input.down('jump')) {
+          _playerVY = PJUMP;
+          audio.tone(300, { type:'sine', duration:0.08, volume:0.15 });
+        }
+
+        playerBody.vx = pvx;
+        playerBody.vy = _playerVY;
+        playerBody.vz = pvz;
+
+        // move kinematic body manually then let world resolve collisions
+        playerBody.x += playerBody.vx * dt;
+        playerBody.y += playerBody.vy * dt;
+        playerBody.z += playerBody.vz * dt;
+
+        const prevY = playerBody.y;
+        world.step(dt);
+        // infer grounded from position correction
+        const corrY = playerBody.y - prevY - playerBody.vy * dt;
+        _playerGrounded = corrY > 0.01;
+        if (_playerGrounded && _playerVY < 0) _playerVY = 0;
+
+        // sync camera to player body
+        cam.setPos(playerBody.x, playerBody.y + 0.7, playerBody.z);
+
+        // shoot on click / Z
+        if ((input.down('action') || mouse.justDown.value) && _shootCd <= 0) {
+          shoot();
+          _shootCd = 0.15;
+        }
+
+        // E key: raycast explosion
+        if (input.down('up') && _locked) {   // repurpose 'up' as 'E' via raw key
+        }
+        // raw 'e' key explosion
+        if (input.down('action') && !mouse.justDown.value) {/* handled above */}
+
+        // right-click / R: raycast + explode
+        if (input.pressed('pause') && input.down('pause')) {
+          const hit = world.raycast(cam.pos, cam.forward, 20);
+          if (hit) explode(hit.body.x, hit.body.y, hit.body.z);
+        }
+
+        // spawn more on Tab
+        if (_spawnCd <= 0 && input.pressed('action')) {/* continuous fire handled */}
+
+        // respawn fallen bodies
+        for (const b of _dynBodies) {
+          if (b.y < -10) {
+            world.teleport(b, (Math.random()-0.5)*8, 6, (Math.random()-0.5)*8 - 3);
+            b.vx=b.vy=b.vz=0;
+          }
         }
 
         input.flush();
@@ -111,40 +219,49 @@
       _alpha => {
         r.begin([0.04, 0.04, 0.08, 1]);
         r.setCamera(cam.view, cam.proj);
+        r.setLight({
+          dir:     v3.new(-0.4, -1, -0.6),
+          color:   v3.new(1, 0.95, 0.85),
+          ambient: v3.new(0.12, 0.12, 0.18),
+        });
 
-        // animated light position
-        const lx = Math.cos(t * 0.7) * 4;
-        const ly = 2.5 + Math.sin(t * 1.1) * 0.5;
-        const lz = Math.sin(t * 0.7) * 4;
-        r.setLight({ dir: v3.new(-lx, -ly, -lz), color: v3.new(1,0.95,0.85), ambient: v3.new(0.1,0.1,0.15) });
+        // ── Floor ────────────────────────────────────────────────────────────
+        _bodyMatrix(floor, _model);
+        r.draw(r.mesh(geoFloor, matFloor), _model);
 
-        // floor
-        r.draw(floor, mFloor);
+        // ── Walls (reuse body matrix) ─────────────────────────────────────────
+        for (const b of world.bodies) {
+          if (b.type !== 'static' || b === floor) continue;
+          _bodyMatrix(b, _model);
+          r.draw(r.mesh(geoWall, b.tag==='ramp' ? matRamp : matWall), _model);
+        }
 
-        // spinning cube
-        m4.identity(_tmp);
-        m4.mul(mCube, m4.translation(_tmp, -2, 0.5, -3), m4.rotY(_tmp, t));
-        r.draw(cube, mCube);
+        // ── Dynamic bodies ───────────────────────────────────────────────────
+        for (const b of _dynBodies) {
+          _bodyMatrix(b, _model);
+          const mat = b._sleeping
+            ? matSleep
+            : r.material(null, { u_albedo: b._color ?? [1,1,1,1] });
+          const geo = b.shape === 'sphere' ? geoSphere : geoBox;
+          r.draw(r.mesh(geo, mat), _model);
+        }
 
-        // bouncing ball
-        m4.translation(mBall, 0, 0.5 + Math.abs(Math.sin(t*2)) * 1.5, -3);
-        r.draw(ball, mBall);
-
-        // pillar (static)
-        r.draw(pillar, mPillar);
-
-        // small sphere at light position (unlit, always bright)
-        m4.translation(mLight, lx, ly, lz);
-        m4.mul(mLight, mLight, m4.scale(_tmp, 0.15, 0.15, 0.15));
-        r.draw(light, mLight);
+        // ── Player (small indicator cube, visible in own view for debugging) ──
+        // (omitted in FPS — would need to offset)
 
         r.end();
 
-        // 2D overlay (fps)
+        // ── HUD text ──────────────────────────────────────────────────────────
+        const active = _dynBodies.filter(b => !b._sleeping).length;
         const info = document.getElementById('info');
-        info.textContent = _locked
-          ? `fps: ${loop.fps} | WASD move | Esc to unlock | t=${t.toFixed(1)}s`
-          : `fps: ${loop.fps} | Click to lock pointer for FPS look`;
+        if (_locked) {
+          info.textContent =
+            `fps: ${loop.fps}  bodies: ${world.bodies.length}  active: ${active}  ` +
+            `pos: (${playerBody.x.toFixed(1)}, ${playerBody.y.toFixed(1)}, ${playerBody.z.toFixed(1)})  ` +
+            `grounded: ${_playerGrounded}  |  WASD move · Space jump · Click shoot · Esc unlock`;
+        } else {
+          info.textContent = `Click canvas to lock pointer for FPS controls  |  fps: ${loop.fps}`;
+        }
       }
     );
   </script>

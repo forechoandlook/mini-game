@@ -28,3 +28,4 @@ export { renderer }                          from './3d/renderer.js';
 export { camera3d }                          from './3d/camera3d.js';
 export { box, sphere, plane, cylinder }      from './3d/geo.js';
 export { v3, v4, m4, quat, DEG, RAD }        from './3d/math.js';
+export { physics3d }                         from './3d/physics3d.js';
