@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Angry Birds · mini-game</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { background:#1a0a00; display:flex; align-items:center; justify-content:center; height:100vh; }
+    canvas { display:block; cursor:crosshair; }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script type="module">
+import {
+  loop, canvas, input, mouse, scene,
+  time, timer, tweens,
+  particles, hud, math,
+} from '../index.js';
+
+// ── constants ────────────────────────────────────────────────────────────────
+const W = 480, H = 270;
+const GROUND_Y  = 248;   // top of ground rect
+const GRAVITY   = 500;   // px/s²
+const SLING_X   = 72;    // slingshot anchor x
+const SLING_Y   = 210;   // slingshot anchor y (where bird rests)
+const MAX_PULL  = 55;    // max drag radius
+const POWER     = 5.2;   // velocity = pull * POWER
+
+// ── level definitions ────────────────────────────────────────────────────────
+// Block types: 'wood' (brown, hp 3) | 'stone' (gray, hp 6) | 'glass' (cyan, hp 1)
+function mkBlock(x, y, w, h, type = 'wood') {
+  const hp = { wood: 3, stone: 6, glass: 1 }[type];
+  return { x, y, w, h, hp, maxHp: hp, type, dead: false, crack: 0 };
+}
+function mkPig(x, y, r = 12) {
+  return { x, y, r, hp: 2, maxHp: 2, dead: false, shake: 0, squash: 1 };
+}
+
+const LEVELS = [
+  {   // Level 1 — simple tower with 2 pigs
+    birds: ['red','red','red'],
+    pigs: [
+      mkPig(340, GROUND_Y - 12),           // ground pig
+      mkPig(340, 185),                     // top pig
+    ],
+    blocks: [
+      mkBlock(308, 200, 10, 48, 'wood'),   // left pillar
+      mkBlock(362, 200, 10, 48, 'wood'),   // right pillar
+      mkBlock(306, 193, 66,  7, 'wood'),   // beam
+    ],
+  },
+  {   // Level 2 — two towers, 3 pigs, stone blocks
+    birds: ['red','red','red','red'],
+    pigs: [
+      mkPig(295, GROUND_Y - 12),
+      mkPig(295, 189),
+      mkPig(375, GROUND_Y - 12),
+    ],
+    blocks: [
+      mkBlock(278, 208, 8, 40, 'wood'),
+      mkBlock(308, 208, 8, 40, 'wood'),
+      mkBlock(276, 201, 42, 7, 'wood'),
+      mkBlock(278, 182, 42, 7, 'stone'),   // stone roof
+      mkBlock(348, 208, 8, 40, 'wood'),
+      mkBlock(392, 208, 8, 40, 'wood'),
+      mkBlock(346, 201, 56, 7, 'stone'),
+    ],
+  },
+];
+
+// ── mutable game state (reset on each level) ─────────────────────────────────
+let lvlIdx  = 0;
+let pigs    = [];
+let blocks  = [];
+let birds   = [];   // remaining queue
+let bird    = null; // active flying/aiming bird
+let ps      = null;
+let score   = 0;
+let phase   = 'aim';   // 'aim' | 'fly' | 'done'
+let isDrag  = false;
+let pullX   = 0, pullY = 0;
+// For bullet-time tween we track unscaled dt manually
+let _timeTweenRunning = false;
+let _timeTweenT = 0, _timeTweenDur = 0, _timeTweenFrom = 1;
+
+function loadLevel(idx) {
+  const def = LEVELS[idx];
+  // deep clone so original defs stay intact
+  pigs   = def.pigs.map(p => ({ ...p }));
+  blocks = def.blocks.map(b => ({ ...b }));
+  birds  = [...def.birds];
+  ps     = particles(512);
+  score  = lvlIdx === 0 ? 0 : score;
+  phase  = 'aim';
+  isDrag = false;
+  bird   = makeBirdAtSling(birds.shift());
+  timer.clear();
+  tweens.clear();
+  time.scale = 1;
+  _timeTweenRunning = false;
+}
+
+function makeBirdAtSling(color) {
+  return {
+    x: SLING_X, y: SLING_Y,
+    vx: 0, vy: 0,
+    r: 10,
+    color: color ?? 'red',
+    trail: [],
+    grounded: false,
+    settledTimer: 0,
+  };
+}
+
+// ── physics helpers ───────────────────────────────────────────────────────────
+function circlePt(cx, cy, cr, px, py) {
+  return (px-cx)**2 + (py-cy)**2 < cr*cr;
+}
+
+function circleCircle(ax, ay, ar, bx, by, br) {
+  return (bx-ax)**2 + (by-ay)**2 < (ar+br)**2;
+}
+
+function circleRect(cx, cy, cr, rx, ry, rw, rh) {
+  const nx = math.clamp(cx, rx, rx+rw);
+  const ny = math.clamp(cy, ry, ry+rh);
+  return (cx-nx)**2 + (cy-ny)**2 < cr*cr;
+}
+
+function circleRectNormal(cx, cy, cr, rx, ry, rw, rh) {
+  const nx = math.clamp(cx, rx, rx+rw);
+  const ny = math.clamp(cy, ry, ry+rh);
+  const dx = cx - nx, dy = cy - ny;
+  const d2 = dx*dx + dy*dy;
+  if (d2 >= cr*cr || d2 === 0) return null;
+  const d = Math.sqrt(d2);
+  return { nx: dx/d, ny: dy/d, pen: cr - d };
+}
+
+// speed of impact → damage
+function impactDmg(speed) {
+  if (speed < 80)  return 0;
+  if (speed < 160) return 1;
+  if (speed < 280) return 2;
+  return 3;
+}
+
+// ── draw helpers ──────────────────────────────────────────────────────────────
+const BLOCK_COLORS = {
+  wood:  { fill: '#8B5E2A', stroke: '#5a3a12', crack: '#3d2005' },
+  stone: { fill: '#7a7a7a', stroke: '#444',    crack: '#222'    },
+  glass: { fill: '#a8e6ef', stroke: '#5bc4d4', crack: '#fff'    },
+};
+
+function drawBlock(ctx, b) {
+  const c = BLOCK_COLORS[b.type];
+  const alpha = 0.4 + 0.6 * (b.hp / b.maxHp);
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = c.fill;
+  ctx.fillRect(b.x, b.y, b.w, b.h);
+  ctx.strokeStyle = c.stroke;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1);
+  // crack lines when damaged
+  if (b.hp < b.maxHp) {
+    ctx.strokeStyle = c.crack;
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    const cx = b.x + b.w/2, cy = b.y + b.h/2;
+    ctx.moveTo(cx, cy); ctx.lineTo(cx + b.w*0.3, cy - b.h*0.4);
+    ctx.moveTo(cx, cy); ctx.lineTo(cx - b.w*0.2, cy + b.h*0.3);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawPig(ctx, p) {
+  if (p.dead) return;
+  const sx = p.shake * Math.sin(Date.now() * 0.04);
+  const sq = p.squash;
+  ctx.save();
+  ctx.translate(p.x + sx, p.y);
+  ctx.scale(sq, 2 - sq);
+
+  // body
+  ctx.fillStyle = p.hp < p.maxHp ? '#6aaa1a' : '#7dc81f';
+  ctx.beginPath(); ctx.arc(0, 0, p.r, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#3d7a00'; ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // snout
+  ctx.fillStyle = '#5a9e10';
+  ctx.beginPath(); ctx.ellipse(2, 3, 5, 4, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#1a5500';
+  ctx.beginPath(); ctx.arc(0, 3, 1.5, 0, Math.PI*2); ctx.fill();  // left nostril
+  ctx.beginPath(); ctx.arc(4, 3, 1.5, 0, Math.PI*2); ctx.fill();  // right nostril
+
+  // eyes
+  const eyeY = p.hp < p.maxHp ? -3 : -4;
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(-3.5, eyeY, 3, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc( 3.5, eyeY, 3, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.arc(-3, eyeY + 0.5, 1.5, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc( 4, eyeY + 0.5, 1.5, 0, Math.PI*2); ctx.fill();
+
+  // angry brow when hurt
+  if (p.hp < p.maxHp) {
+    ctx.strokeStyle = '#2a5000'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-6, eyeY - 3); ctx.lineTo(-1, eyeY - 1.5);
+    ctx.moveTo( 7, eyeY - 3); ctx.lineTo( 2, eyeY - 1.5);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawBird(ctx, b, alpha = 1) {
+  ctx.globalAlpha = alpha;
+  ctx.save();
+  ctx.translate(Math.round(b.x), Math.round(b.y));
+
+  // body
+  ctx.fillStyle = '#d43';
+  ctx.beginPath(); ctx.arc(0, 0, b.r, 0, Math.PI*2); ctx.fill();
+
+  // white belly
+  ctx.fillStyle = '#f97';
+  ctx.beginPath(); ctx.ellipse(1, 3, 5, 4, 0, 0, Math.PI*2); ctx.fill();
+
+  // angry brow
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.moveTo(-b.r+1, -3); ctx.lineTo(-1, -5);
+  ctx.lineTo( 2, -3); ctx.lineTo( b.r-1, -4);
+  ctx.lineTo( b.r-1, -2); ctx.lineTo(0, -1);
+  ctx.lineTo(-b.r+1, -1); ctx.closePath(); ctx.fill();
+
+  // eyes
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(-2, -1, 2.5, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc( 3, -2, 2.5, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.arc(-1.5, -1, 1.2, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc( 3.5, -2, 1.2, 0, Math.PI*2); ctx.fill();
+
+  // beak
+  ctx.fillStyle = '#f90';
+  ctx.beginPath();
+  ctx.moveTo(b.r - 3, -1); ctx.lineTo(b.r + 4, 1); ctx.lineTo(b.r - 3, 3);
+  ctx.closePath(); ctx.fill();
+
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+function drawSling(ctx, px, py) {
+  // rubber band
+  if (phase === 'aim' && bird) {
+    const bx = bird.x, by = bird.y;
+    ctx.strokeStyle = '#8B4513';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(SLING_X - 7, SLING_Y - 12); ctx.lineTo(bx, by); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(SLING_X + 7, SLING_Y - 14); ctx.lineTo(bx, by); ctx.stroke();
+  }
+  // fork
+  ctx.strokeStyle = '#5a3000'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(SLING_X, SLING_Y + 30);
+  ctx.lineTo(SLING_X, SLING_Y + 5);
+  ctx.lineTo(SLING_X - 10, SLING_Y - 14);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(SLING_X, SLING_Y + 5);
+  ctx.lineTo(SLING_X + 10, SLING_Y - 16);
+  ctx.stroke();
+}
+
+function drawBackground(ctx) {
+  // sky
+  const sky = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+  sky.addColorStop(0, '#4ec8ff');
+  sky.addColorStop(1, '#a8e4ff');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, GROUND_Y);
+
+  // clouds
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  for (const [cx, cy, r] of [[100,50,22],[108,44,16],[90,52,14],[300,40,20],[310,34,15],[290,42,12]]) {
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
+  }
+
+  // hill
+  ctx.fillStyle = '#5a9e2f';
+  ctx.beginPath(); ctx.arc(200, GROUND_Y, 80, 0, Math.PI, true);
+  ctx.arc(380, GROUND_Y, 60, 0, Math.PI, true);
+  ctx.fill();
+
+  // ground
+  ctx.fillStyle = '#7a5020';
+  ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
+  ctx.fillStyle = '#5a9e2f';
+  ctx.fillRect(0, GROUND_Y, W, 6);
+}
+
+function drawTrajectory(ctx) {
+  if (phase !== 'aim' || !isDrag || !bird) return;
+  const dx = SLING_X - bird.x, dy = SLING_Y - bird.y;
+  let sx = SLING_X, sy = SLING_Y;
+  let vx = dx * POWER, vy = dy * POWER;
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  for (let i = 0; i < 30; i++) {
+    const dt = 0.033;
+    vx += 0; vy += GRAVITY * dt;
+    sx += vx * dt; sy += vy * dt;
+    if (i % 2 === 0) {
+      const r = 2.5 - i * 0.06;
+      if (r > 0.3) {
+        ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI*2); ctx.fill();
+      }
+    }
+    if (sy > GROUND_Y) break;
+  }
+}
+
+function drawBirdsHUD(ctx) {
+  hud.text(ctx, `SCORE  ${score}`, W/2, 14, { font: 'bold 11px monospace', color: '#fff', align: 'center', shadow: { color: "#000", ox: 1, oy: 1 } });
+  // remaining birds
+  const total = birds.length + (bird ? 1 : 0);
+  for (let i = 0; i < total; i++) {
+    const bx = 12 + i * 18, by = H - 18;
+    ctx.fillStyle = '#d43';
+    ctx.beginPath(); ctx.arc(bx, by, 7, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#900'; ctx.lineWidth = 1; ctx.stroke();
+  }
+  hud.text(ctx, `LV ${lvlIdx+1}`, W - 8, 14, { font: '10px monospace', color: '#ddf', align: 'right' });
+}
+
+// ── game logic ────────────────────────────────────────────────────────────────
+function damagePig(p, dmg) {
+  if (dmg <= 0 || p.dead) return;
+  p.hp -= dmg;
+  p.shake = 6;
+  tweens.to(p, { shake: 0 }, 0.4, 'easeOutBounce');
+  p.squash = 0.7;
+  tweens.to(p, { squash: 1 }, 0.3, 'easeOutElastic');
+  if (p.hp <= 0) {
+    p.dead = true;
+    score += 500;
+    ps.presets.explosion(ps, p.x, p.y, { color: [0.3, 0.7, 0.1] });
+    ps.burst({ x: p.x, y: p.y, count: 8, speed: 40, spread: Math.PI*2,
+      lifetime: 0.6, size: 5, colorStart: [1,1,0.4,1], colorEnd: [0.6,0.8,0,0] });
+  }
+}
+
+function damageBlock(b, dmg) {
+  if (dmg <= 0 || b.dead) return;
+  b.hp -= dmg;
+  score += 50;
+  if (b.hp <= 0) {
+    b.dead = true;
+    const c = BLOCK_COLORS[b.type];
+    const [r,g,bl] = b.type === 'wood' ? [0.55,0.37,0.16] : b.type === 'stone' ? [0.48,0.48,0.48] : [0.66,0.9,0.94];
+    ps.burst({ x: b.x+b.w/2, y: b.y+b.h/2, count: 10, speed: 60, spread: Math.PI*2,
+      lifetime: 0.5, size: 4, sizeEnd: 0, gravity: 150,
+      colorStart: [r,g,bl,1], colorEnd: [r*0.5,g*0.5,bl*0.5,0] });
+  }
+}
+
+function startBulletTime() {
+  time.scale = 0.25;
+  _timeTweenRunning = true;
+  _timeTweenT = 0;
+  _timeTweenDur = 1.8;
+  _timeTweenFrom = 0.25;
+}
+
+function updateBulletTime(rawDt) {
+  if (!_timeTweenRunning) return;
+  _timeTweenT += rawDt;
+  const t = Math.min(_timeTweenT / _timeTweenDur, 1);
+  time.scale = _timeTweenFrom + (1 - _timeTweenFrom) * t * t;
+  if (t >= 1) { _timeTweenRunning = false; time.scale = 1; }
+}
+
+function nextBird() {
+  if (birds.length === 0) {
+    bird = null;
+    checkEnd();
+  } else {
+    bird = makeBirdAtSling(birds.shift());
+    phase = 'aim';
+    isDrag = false;
+  }
+}
+
+function checkEnd() {
+  const pigsAlive = pigs.filter(p => !p.dead).length;
+  if (pigsAlive === 0) {
+    score += birds.length * 100;
+    timer.after(1.5, () => scene.go(lvlIdx < LEVELS.length - 1 ? 'levelclear' : 'win'));
+    phase = 'done';
+  } else if (!bird && birds.length === 0) {
+    timer.after(1.5, () => scene.go('lose'));
+    phase = 'done';
+  }
+}
+
+// ── scenes ────────────────────────────────────────────────────────────────────
+scene.define('menu', {
+  update(dt) {
+    tweens.update(dt);
+    if (mouse.justUp.value || input.down('action') || input.down('jump')) {
+      lvlIdx = 0; score = 0;
+      scene.go('play');
+    }
+    input.flush();
+  },
+  render(ctx) {
+    // sky
+    const sky = ctx.createLinearGradient(0, 0, 0, H);
+    sky.addColorStop(0, '#1a4080'); sky.addColorStop(1, '#4ec8ff');
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+
+    hud.text(ctx, '🐦 ANGRY BIRDS', W/2, 80, { font: 'bold 28px serif', color: '#fff', align: 'center', shadow: { color: "#000", ox: 1, oy: 1 } });
+    hud.text(ctx, 'mini-game edition', W/2, 105, { font: '12px monospace', color: '#ddf', align: 'center' });
+
+    const blink = Math.floor(Date.now() / 500) % 2 === 0;
+    if (blink) hud.text(ctx, 'Click or press Space to start', W/2, 150, { font: '10px monospace', color: '#ff0', align: 'center' });
+
+    hud.text(ctx, 'Drag the bird to aim · Release to launch', W/2, 175, { font: '9px monospace', color: '#adf', align: 'center' });
+    hud.text(ctx, 'Destroy all pigs to win each level!', W/2, 188, { font: '9px monospace', color: '#adf', align: 'center' });
+  },
+});
+
+scene.define('play', {
+  enter() { loadLevel(lvlIdx); },
+  exit()  { timer.clear(); tweens.clear(); time.scale = 1; _timeTweenRunning = false; },
+
+  update(dt) {
+    // raw dt for bullet-time control (divide out time.scale)
+    const rawDt = dt / time.scale;
+    updateBulletTime(rawDt);
+    tweens.update(dt);
+    timer.update(dt);
+    ps.update(dt);
+
+    const mx = mouse.x.value, my = mouse.y.value;
+
+    if (phase === 'aim' && bird) {
+      // start drag when mouse pressed near bird
+      if (mouse.justDown.value) {
+        const dist = Math.hypot(mx - bird.x, my - bird.y);
+        if (dist < bird.r + 20) isDrag = true;
+      }
+      if (isDrag) {
+        if (mouse.down.value) {
+          let dx = mx - SLING_X, dy = my - SLING_Y;
+          const d = Math.hypot(dx, dy);
+          if (d > MAX_PULL) { dx = dx/d*MAX_PULL; dy = dy/d*MAX_PULL; }
+          pullX = dx; pullY = dy;
+          bird.x = SLING_X + pullX;
+          bird.y = SLING_Y + pullY;
+        } else {
+          // release → launch
+          bird.vx = -pullX * POWER;
+          bird.vy = -pullY * POWER;
+          phase = 'fly';
+          isDrag = false;
+          startBulletTime();
+          ps.burst({ x: bird.x, y: bird.y, count: 10, speed: 50, spread: Math.PI*2,
+            lifetime: 0.4, size: 4, colorStart: [1,0.8,0.3,0.9], colorEnd: [1,0.4,0.1,0] });
+        }
+      }
+    }
+
+    if (phase === 'fly' && bird) {
+      bird.vy += GRAVITY * dt;
+      bird.x  += bird.vx * dt;
+      bird.y  += bird.vy * dt;
+
+      // trail
+      bird.trail.push({ x: bird.x, y: bird.y });
+      if (bird.trail.length > 22) bird.trail.shift();
+
+      const speed = Math.hypot(bird.vx, bird.vy);
+
+      // ground collision
+      if (bird.y + bird.r >= GROUND_Y) {
+        bird.y = GROUND_Y - bird.r;
+        const dmg = impactDmg(Math.abs(bird.vy));
+        bird.vy = -bird.vy * 0.25;
+        bird.vx *= 0.6;
+        ps.burst({ x: bird.x, y: bird.y, count: 6, speed: 40, angle: -Math.PI/2, spread: Math.PI*0.6,
+          lifetime: 0.4, size: 4, colorStart: [0.55,0.35,0.1,1], colorEnd: [0.4,0.2,0.05,0] });
+      }
+
+      // block collisions
+      for (const b of blocks) {
+        if (b.dead) continue;
+        const info = circleRectNormal(bird.x, bird.y, bird.r, b.x, b.y, b.w, b.h);
+        if (!info) continue;
+        bird.x += info.nx * info.pen;
+        bird.y += info.ny * info.pen;
+        const dot = bird.vx * info.nx + bird.vy * info.ny;
+        if (dot < 0) {
+          bird.vx -= 2 * dot * info.nx;
+          bird.vy -= 2 * dot * info.ny;
+          bird.vx *= 0.4; bird.vy *= 0.4;
+        }
+        damageBlock(b, impactDmg(speed));
+      }
+
+      // pig collisions
+      for (const p of pigs) {
+        if (p.dead) continue;
+        if (!circleCircle(bird.x, bird.y, bird.r, p.x, p.y, p.r)) continue;
+        // push apart
+        const dx = bird.x - p.x, dy = bird.y - p.y;
+        const d  = Math.hypot(dx, dy) || 1;
+        const pen = bird.r + p.r - d;
+        bird.x += dx/d * pen * 0.5;
+        bird.y += dy/d * pen * 0.5;
+        // reflect
+        const nx = dx/d, ny = dy/d;
+        const dot = bird.vx * nx + bird.vy * ny;
+        if (dot < 0) { bird.vx -= 2*dot*nx * 0.4; bird.vy -= 2*dot*ny * 0.4; }
+        damagePig(p, impactDmg(speed));
+      }
+
+      // settled / off-screen
+      const settled = speed < 15 && bird.y + bird.r >= GROUND_Y - 1;
+      const offscreen = bird.x < -50 || bird.x > W + 50 || bird.y > H + 50;
+      if (settled || offscreen) {
+        // remove bird after short delay
+        const b = bird;
+        bird = null;
+        phase = 'wait';
+        timer.after(0.8, () => {
+          checkEnd();
+          if (phase !== 'done') nextBird();
+        });
+      }
+    }
+
+    // flush always
+    input.flush();
+  },
+
+  render(ctx) {
+    drawBackground(ctx);
+    drawTrajectory(ctx);
+    drawSling(ctx);
+
+    // trail
+    if (bird && phase === 'fly') {
+      for (let i = 0; i < bird.trail.length; i++) {
+        const t = bird.trail[i];
+        const a = (i / bird.trail.length) * 0.5;
+        const r = (i / bird.trail.length) * 5;
+        ctx.globalAlpha = a;
+        ctx.fillStyle = '#f86';
+        ctx.beginPath(); ctx.arc(t.x, t.y, r, 0, Math.PI*2); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    for (const b of blocks) { if (!b.dead) drawBlock(ctx, b); }
+    for (const p of pigs)   { drawPig(ctx, p); }
+    if (bird) drawBird(ctx, bird);
+    ps.render(ctx);
+
+    drawBirdsHUD(ctx);
+
+    // slow-mo badge
+    if (time.scale < 0.95) {
+      hud.text(ctx, `SLOW ${(time.scale*100)|0}%`, W-8, 26,
+        { font: 'bold 9px monospace', color: '#ff4', align: 'right' });
+    }
+  },
+});
+
+scene.define('levelclear', {
+  enter() {
+    timer.clear(); tweens.clear(); time.scale = 1;
+  },
+  update(dt) {
+    tweens.update(dt); timer.update(dt);
+    if (mouse.justUp.value || input.down('action') || input.down('jump')) {
+      lvlIdx++;
+      scene.go('play');
+    }
+    input.flush();
+  },
+  render(ctx) {
+    const sky = ctx.createLinearGradient(0,0,0,H);
+    sky.addColorStop(0,'#1a4080'); sky.addColorStop(1,'#4ec8ff');
+    ctx.fillStyle = sky; ctx.fillRect(0,0,W,H);
+    hud.text(ctx, '⭐ LEVEL CLEAR!', W/2, 90, { font:'bold 22px serif', color:'#ff0', align:'center', shadow:true });
+    hud.text(ctx, `Score: ${score}`, W/2, 120, { font:'14px monospace', color:'#fff', align:'center' });
+    hud.text(ctx, 'Click or Space for next level', W/2, 155, { font:'10px monospace', color:'#adf', align:'center' });
+  },
+});
+
+scene.define('win', {
+  enter() { timer.clear(); tweens.clear(); time.scale = 1; },
+  update(dt) {
+    tweens.update(dt); timer.update(dt);
+    if (mouse.justUp.value || input.down('action') || input.down('jump')) {
+      lvlIdx = 0; score = 0;
+      scene.go('menu');
+    }
+    input.flush();
+  },
+  render(ctx) {
+    ctx.fillStyle = '#0a2a00'; ctx.fillRect(0,0,W,H);
+    hud.text(ctx, '🎉 YOU WIN!', W/2, 85, { font:'bold 26px serif', color:'#7f4', align:'center', shadow:true });
+    hud.text(ctx, `Final Score: ${score}`, W/2, 118, { font:'bold 13px monospace', color:'#ff0', align:'center' });
+    hud.text(ctx, 'Click or Space to play again', W/2, 155, { font:'10px monospace', color:'#adf', align:'center' });
+  },
+});
+
+scene.define('lose', {
+  enter() { timer.clear(); tweens.clear(); time.scale = 1; },
+  update(dt) {
+    tweens.update(dt); timer.update(dt);
+    if (mouse.justUp.value || input.down('action') || input.down('jump')) {
+      scene.go('play');   // retry same level
+    }
+    input.flush();
+  },
+  render(ctx) {
+    ctx.fillStyle = '#2a0000'; ctx.fillRect(0,0,W,H);
+    hud.text(ctx, '💀 LEVEL FAILED', W/2, 85, { font:'bold 22px serif', color:'#f44', align:'center', shadow:true });
+    hud.text(ctx, `Score: ${score}`, W/2, 115, { font:'13px monospace', color:'#faa', align:'center' });
+    hud.text(ctx, 'Click or Space to retry', W/2, 150, { font:'10px monospace', color:'#fcc', align:'center' });
+  },
+});
+
+// ── boot ──────────────────────────────────────────────────────────────────────
+canvas.init('#c', { width: W, height: H, pixelated: false });
+input.init(canvas.el);
+const ctx = canvas.ctx;
+
+scene.go('menu');
+loop.start(
+  dt    => scene.update(dt),
+  _     => scene.render(ctx),
+);
+</script>
+</body>
+</html>

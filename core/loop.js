@@ -1,6 +1,8 @@
 // Fixed-timestep game loop with variable rendering
 // update runs at fixed STEP intervals; render gets interpolation alpha
 
+import { time } from './time.js';
+
 let STEP = 1000 / 60; // 16.67ms fixed physics step
 
 let _update = null, _render = null;
@@ -20,7 +22,8 @@ function tick(now) {
   _acc += dt;
 
   while (_acc >= STEP) {
-    _update?.(STEP / 1000);
+    time.rawDt = STEP / 1000;
+    _update?.(time.rawDt * time.scale);
     _acc -= STEP;
     _frameCount++;
   }

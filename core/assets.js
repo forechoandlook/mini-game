@@ -121,6 +121,20 @@ export const assets = {
     };
   },
 
+  getImage(key) {
+    const v = _cache.get(key);
+    if (!(v instanceof HTMLImageElement)) console.warn(`[assets] not an image: ${key}`);
+    return /** @type {HTMLImageElement} */ (v) ?? null;
+  },
+
+  getAudio(key) {
+    const v = _cache.get(key);
+    if (!(v instanceof AudioBuffer)) console.warn(`[assets] not an AudioBuffer: ${key}`);
+    return /** @type {AudioBuffer} */ (v) ?? null;
+  },
+
+  getJSON(key) { return _cache.get(key) ?? null; },
+
   has(key)  { return _cache.has(key); },
   clear()   { _cache.clear(); _sfxPools.clear(); _manifest.length = 0; },
 

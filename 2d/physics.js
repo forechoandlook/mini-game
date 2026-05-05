@@ -114,6 +114,56 @@ export function resolve(a, b) {
   }
 }
 
+// ── Circle collision ──────────────────────────────────────────────────────────
+// Circles are described as { x, y, r } (center + radius).
+// These are pure query functions — they don't mutate anything.
+
+// Boolean overlap test between two circles.
+export function circleVsCircle(a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const rr = a.r + b.r;
+  return dx*dx + dy*dy < rr*rr;
+}
+
+// MTV for two overlapping circles.
+// Returns { nx, ny, pen } (push a in nx/ny direction by pen to separate) or null.
+export function circleMtv(a, b) {
+  const dx = a.x - b.x, dy = a.y - b.y;
+  const d2 = dx*dx + dy*dy;
+  const rr = a.r + b.r;
+  if (d2 >= rr*rr) return null;
+  const d = Math.sqrt(d2) || 0.001;
+  return { nx: dx/d, ny: dy/d, pen: rr - d };
+}
+
+// Boolean overlap test: circle vs AABB rect { x, y, w, h }.
+export function circleVsRect(c, r) {
+  const nx = Math.max(r.x, Math.min(c.x, r.x + r.w));
+  const ny = Math.max(r.y, Math.min(c.y, r.y + r.h));
+  const dx = c.x - nx, dy = c.y - ny;
+  return dx*dx + dy*dy < c.r*c.r;
+}
+
+// MTV for circle vs AABB rect.
+// Returns { nx, ny, pen } (push circle by pen in nx/ny direction) or null.
+export function circleRectMtv(c, r) {
+  const nx = Math.max(r.x, Math.min(c.x, r.x + r.w));
+  const ny = Math.max(r.y, Math.min(c.y, r.y + r.h));
+  const dx = c.x - nx, dy = c.y - ny;
+  const d2 = dx*dx + dy*dy;
+  if (d2 >= c.r*c.r) return null;
+  // circle center inside rect → find smallest exit
+  if (d2 === 0) {
+    const ox = c.x - (r.x + r.w/2), oy = c.y - (r.y + r.h/2);
+    const ex = r.w/2 + c.r - Math.abs(ox), ey = r.h/2 + c.r - Math.abs(oy);
+    return ex < ey
+      ? { nx: Math.sign(ox), ny: 0, pen: ex }
+      : { nx: 0, ny: Math.sign(oy), pen: ey };
+  }
+  const d = Math.sqrt(d2);
+  return { nx: dx/d, ny: dy/d, pen: c.r - d };
+}
+
 // Raycast against list of rects; returns nearest { t, nx, ny, hit } or null
 // ray: { x, y, dx, dy, len }
 export function raycast(ray, rects) {

@@ -4,13 +4,15 @@
 ```js
 import { loop, canvas, input, mouse, axis, scene, currentScene,
          assets, loadProgress, pool,
+         time, timer, save, load, savedSignal,
          body, move, applyGravity, aabb, mtv, raycast,
          camera, tilemap, particles, spriteSheet,
          hud, menu, dialog,
          audio,
          renderer, camera3d, physics3d,
          box, sphere, plane, cylinder,
-         v3, m4, quat, DEG } from './index.js';
+         v3, m4, quat, DEG,
+         math, random, tweens } from './index.js';
 ```
 
 ---
@@ -35,6 +37,23 @@ import { loop, canvas, input, mouse, axis, scene, currentScene,
 - `assets.get(key)` — 返回 HTMLImageElement / AudioBuffer / object
 - `loadProgress.value` — signal 0..1，可直接绑进度条
 - `pool(cap, factory, reset?)` — 预分配对象池，零 GC；`obtain()` 取槽，`active=false` 回收，`update(fn)` 遍历+自动回收（返回 false = 释放）
+- `time.scale` — 全局时间缩放（`< 1` 慢动作，`> 1` 加速）；loop 自动将 `dt * time.scale` 传给 update
+- `time.rawDt` — loop 每 tick 写入的原始帧时间（未缩放），用于需要挂钟时间的场景（如将 `time.scale` 自身 tween 回 1）
+- `timer.after(delay, fn)` — 延迟回调（秒）；`timer.every(interval, fn)` — 周期回调（fn 返回 false 取消）；`timer.update(dt)` 需在 update 内调用；`timer.clear()` 场景 exit 时清空
+- `save(key, data)` / `load(key, def)` / `deleteSave(key)` — localStorage JSON 存档；`savedSignal(key, def)` — 写入即自动持久化的 signal
+
+---
+
+## Utils
+
+- `math.clamp/lerp/remap/smoothstep/wrap/sign/pingpong` — 标量工具
+- `math.dist/dist2/angle/dirX/dirY` — 2D 几何
+- `math.moveToward(cur, target, step)` — 匀速逼近（敌人追踪、缓动移动）
+- `math.lerpAngle(a,b,t)` — 角度插值（自动处理 ±π 跨界）
+- `math.toRad/toDeg` / `math.rand/randInt` — 非 seeded 随机快捷
+- `random.seed(n)` — 设置 mulberry32 PRNG 种子；`random.next/float/int/pick/shuffle/chance`
+- `tweens.to(obj, props, duration, easing)` — 返回 `{ stop(), onDone(fn) }`；easing: `linear/easeIn/easeOut/easeInOut/easeOutCubic/easeOutBack/easeOutBounce/easeOutElastic`；`tweens.update(dt)` 需每帧调用；`tweens.clear()` 场景 exit 清空
+- `assets.getImage(key)` / `assets.getAudio(key)` / `assets.getJSON(key)` — 类型化快捷
 
 ---
 
@@ -45,6 +64,10 @@ import { loop, canvas, input, mouse, axis, scene, currentScene,
 - `move(b, dt, obstacles)` — 移动 + 碰撞解算；obstacles 元素 `{ x,y,w,h, oneWay? }`；oneWay=true 单向平台
 - `b.grounded` — 落地检测（MTV ny=-1 时为 true，即 MTV 向上推）
 - `aabb(a,b)` — boolean；`mtv(a,b)` — `{ dx,dy,nx,ny }` 最小分离向量；`raycast(ray, rects)` — `{ t,nx,ny,hit }`
+- `circleVsCircle(a,b)` — boolean，圆 `{x,y,r}` 重叠检测
+- `circleMtv(a,b)` — `{ nx,ny,pen }` 圆-圆最小分离向量
+- `circleVsRect(c,r)` — boolean，圆 vs AABB `{x,y,w,h}`
+- `circleRectMtv(c,r)` — `{ nx,ny,pen }` 圆-矩形最小分离向量（含圆心在矩形内的情形）
 - `camera({ w,h, lerp:0.05, bounds:{x,y,w,h} })` — 2D 跟随相机
 - `cam.follow(target)` / `cam.update(dt)` / `cam.shake(duration, mag)`
 - `cam.begin(ctx)` … 画世界物体 … `cam.end(ctx)` — save/translate/restore 包裹
@@ -117,24 +140,48 @@ canvas.init('#c', { width:480, height:270, pixelated:true });
 input.init(canvas.el);
 
 scene.define('play', {
+  enter() {
+    random.seed(Date.now());          // 每局随机种子
+    timer.clear();                    // 清理上一局残留 timer
+    tweens.clear();
+    time.scale = 1;
+  },
   update(dt) {
+    // dt 已经乘以 time.scale，物理/动画自动慢放
+    tweens.update(dt);                // tween 驱动
+    timer.update(dt);                 // 延迟/周期回调
+
     applyGravity(player, dt);
     player.vx = input.axisX() * SPEED;
-    if (input.down('jump') && player.grounded) player.vy = JUMP_V;
+    if (input.down('jump') && player.grounded) {
+      player.vy = JUMP_V;
+      // 跳跃 bullet-time：0.4x 慢放 → 1s 内恢复正常
+      time.scale = 0.4;
+      tweens.to(time, { scale: 1 }, 1.0, 'easeIn');
+    }
     move(player, dt, platforms);
     cam.update(dt);
+
+    // 定时触发事件，无需手写计数器
+    // timer.after(3, () => spawnEnemy());
+    // timer.every(0.5, () => emitParticle());
+
     input.flush();   // ← 必须最后
   },
   render(ctx) {
     canvas.clear('#1a1a2e');
-    cam.begin(ctx);  // 世界空间
+    cam.begin(ctx);
       // draw sprites, tiles...
-    cam.end(ctx);    // 屏幕空间
+    cam.end(ctx);
     hud.bar(ctx, 8, 8, 80, 8, hp, maxHp);
+  },
+  exit() {
+    timer.clear();   // 离开场景时清理
+    tweens.clear();
   },
 });
 
-effect(() => { statusEl.textContent = currentScene.value; });  // 响应式 HUD
+effect(() => { statusEl.textContent = currentScene.value; });
 scene.go('play');
 loop.start(dt => scene.update(dt), () => scene.render(ctx));
 ```
