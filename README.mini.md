@@ -2,21 +2,11 @@
 轻量游戏框架，无构建，纯 ES Module。复用 mini-react signal 驱动响应式 HUD。
 
 ```js
-import { createGame,
-         loop, canvas, input, mouse, axis,
-         assets, loadProgress, pool,
-         time, timer, save, load, savedSignal,
-         body, applyGravity, move, bounce, bouncePaddle, resolve,
-         aabb, mtv, raycast,
-         circleVsCircle, circleMtv, circleVsRect, circleRectMtv, moveCircle,
-         capsuleVsCapsule, capsuleMtv, capsuleVsRect, capsuleRectMtv, moveCapsule,
-         camera, tilemap, particles, spriteSheet,
-         hud, menu, dialog,
-         audio,
-         renderer, camera3d, physics3d,
-         box, sphere, plane, cylinder,
-         v3, m4, quat, DEG,
-         math, random, tweens, stateMachine } from './index.js';
+import { createGame,loop, canvas, input, mouse, axis, assets, loadProgress, pool,
+         time, timer, save, load, savedSignal,body, applyGravity, move, bounce, bouncePaddle, resolve,aabb, mtv, raycast,
+         circleVsCircle, circleMtv, circleVsRect, circleRectMtv, moveCircle,capsuleVsCapsule, capsuleMtv, capsuleVsRect, capsuleRectMtv, moveCapsule,
+         camera, tilemap, particles, spriteSheet,hud, menu, dialog,
+         audio,renderer, camera3d, physics3d,box, sphere, plane, cylinder,v3, m4, quat, DEG,math, random, tweens, stateMachine } from './index.js';
 ```
 
 ---

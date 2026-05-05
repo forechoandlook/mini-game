@@ -12,7 +12,7 @@
 //   map.loadTiled(json)
 //   map.render(ctx, cam)
 
-export function tilemap({ tileW = 16, tileH = 16, img = null, solidIds = null } = {}) {
+export function tilemap({ tileW = 16, tileH = 16, img = null, solidIds = null, drawTile = null } = {}) {
   // solidIds: Set or null (null = all non-zero are solid)
   const _solid = solidIds instanceof Set ? solidIds : null;
 
@@ -26,9 +26,11 @@ export function tilemap({ tileW = 16, tileH = 16, img = null, solidIds = null } 
     return _solid ? _solid.has(id) : true;
   }
 
-  // draw one tile (id 1-based, row-major in spritesheet)
+  // draw one tile — uses drawTile callback if provided, else spritesheet image
   function _drawTile(ctx, id, px, py) {
-    if (!img || id === 0) return;
+    if (id === 0) return;
+    if (drawTile) { drawTile(ctx, id, px, py, tileW, tileH); return; }
+    if (!img) return;
     const anim = _animated.get(id);
     const draw = anim ? anim.frames[anim.cur].id : id;
     const idx  = draw - 1;

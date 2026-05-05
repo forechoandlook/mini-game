@@ -10,17 +10,23 @@ export function spriteSheet(img, fw, fh) {
   const cols = Math.floor(img.width  / fw);
   const rows = Math.floor(img.height / fh);
 
-  // draw a single frame index
-  function drawFrame(ctx, frame, x, y, { flipX = false, flipY = false, scale = 1, alpha = 1 } = {}) {
+  // draw a single frame at (x, y) — top-left anchor by default.
+  // angle rotates around the frame center; flipX/flipY mirror before rotation.
+  function drawFrame(ctx, frame, x, y, {
+    flipX = false, flipY = false,
+    scale = 1, alpha = 1, angle = 0,
+  } = {}) {
     const col = frame % cols;
     const row = Math.floor(frame / cols);
     const dw = fw * scale, dh = fh * scale;
 
     ctx.save();
     if (alpha !== 1) ctx.globalAlpha = alpha;
-    if (flipX || flipY) {
-      ctx.translate(x + dw / 2, y + dh / 2);
-      ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
+
+    if (angle || flipX || flipY) {
+      ctx.translate(Math.round(x + dw / 2), Math.round(y + dh / 2));
+      if (angle) ctx.rotate(angle);
+      if (flipX || flipY) ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
       ctx.drawImage(img, col * fw, row * fh, fw, fh, -dw / 2, -dh / 2, dw, dh);
     } else {
       ctx.drawImage(img, col * fw, row * fh, fw, fh, Math.round(x), Math.round(y), dw, dh);
@@ -72,14 +78,15 @@ export function spriteSheet(img, fw, fh) {
 // Simple static sprite (no sheet)
 export function sprite(img, { ox = 0, oy = 0 } = {}) {
   return {
-    draw(ctx, x, y, { flipX = false, scale = 1, alpha = 1 } = {}) {
+    draw(ctx, x, y, { flipX = false, flipY = false, scale = 1, alpha = 1, angle = 0 } = {}) {
       const dw = img.width * scale, dh = img.height * scale;
       ctx.save();
       if (alpha !== 1) ctx.globalAlpha = alpha;
-      if (flipX) {
-        ctx.translate(x + dw / 2, y);
-        ctx.scale(-1, 1);
-        ctx.drawImage(img, -dw / 2 - ox, oy, dw, dh);
+      if (angle || flipX || flipY) {
+        ctx.translate(Math.round(x - ox + dw/2), Math.round(y - oy + dh/2));
+        if (angle) ctx.rotate(angle);
+        if (flipX || flipY) ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
+        ctx.drawImage(img, -dw/2, -dh/2, dw, dh);
       } else {
         ctx.drawImage(img, Math.round(x - ox), Math.round(y - oy), dw, dh);
       }
