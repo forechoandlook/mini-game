@@ -2,6 +2,10 @@
 // All ops write into a pre-allocated out parameter.
 // Convention: column-major 4x4 matrices (matches WebGL).
 
+// scratch vecs for lookAt — module-level so no per-call allocation
+const _lf = new Float32Array(3), _ls = new Float32Array(3);
+const _lu = new Float32Array(3), _lt = new Float32Array(3);
+
 // ── Vec3 ──────────────────────────────────────────────────────────────────────
 export const v3 = {
   new(x=0,y=0,z=0)       { return new Float32Array([x,y,z]); },
@@ -91,7 +95,7 @@ export const m4 = {
   },
 
   lookAt(o, eye, center, up) {
-    const f = v3.new(), s = v3.new(), u = v3.new(), t = v3.new();
+    const f = _lf, s = _ls, u = _lu, t = _lt;
     v3.normalize(f, v3.sub(t, center, eye));   // forward
     v3.normalize(s, v3.cross(t, f, up));        // right
     v3.cross(u, s, f);                          // up (reorthogonalized)

@@ -21,11 +21,11 @@ export { menu }                              from './ui/menu.js';
 export { dialog }                            from './ui/dialog.js';
 
 // audio
-export { audio, masterVolume }               from './audio/audio.js';
+export { audio }                             from './audio/audio.js';
 
 // 3d
 export { renderer }                          from './3d/renderer.js';
 export { camera3d }                          from './3d/camera3d.js';
 export { box, sphere, plane, cylinder }      from './3d/geo.js';
-export { v3, v4, m4, quat, DEG, RAD }        from './3d/math.js';
+export { v3, v4, m4, quat, DEG, RAD }        from './utils/math.js';
 export { physics3d }                         from './3d/physics3d.js';

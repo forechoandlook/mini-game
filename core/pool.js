@@ -1,50 +1,70 @@
-// Object pool — pre-allocate N objects, recycle instead of new/GC
+// Object pool — pre-allocate N objects, O(1) obtain/release.
+// Release via pool.release(o) OR by setting o.active = false directly.
+//
 // Usage:
-//   const bullets = pool(50, () => ({ x:0, y:0, vx:0, vy:0, active:false }));
-//   const b = bullets.obtain();   // get one (returns null if exhausted)
-//   b.active = false;             // "free" it — pool reclaims automatically
-//   bullets.forEach(b => { ... }) // iterate only active objects
+//   const bullets = pool(50, () => ({ x:0, y:0, vx:0, vy:0 }));
+//   const b = bullets.obtain();
+//   b.active = false;          // release back to pool
+//   bullets.forEach(b => {})   // iterate active objects
 
 export function pool(capacity, factory, reset = null) {
-  const _items = Array.from({ length: capacity }, factory);
-  // mark all inactive
-  for (const o of _items) o.active = false;
+  const _free = new Int32Array(capacity);
+  let _freeTop = capacity;
+  for (let i = 0; i < capacity; i++) _free[i] = i;
 
-  const _reset = reset ?? (o => { for (const k in o) if (k !== 'active') o[k] = 0; });
+  const _reset = reset ?? (o => {
+    for (const k in o) {
+      if (k !== 'active' && k !== '_poolIdx') o[k] = 0;
+    }
+  });
+
+  // 'active' is a defineProperty setter on each item so that
+  // setting o.active = false from anywhere auto-returns the slot to the free-list
+  const _items = Array.from({ length: capacity }, (_, i) => {
+    const o = factory();
+    let _active = false;
+    Object.defineProperty(o, 'active', {
+      get() { return _active; },
+      set(v) {
+        if (_active && !v) { _active = false; _free[_freeTop++] = i; }
+        else _active = !!v;
+      },
+      enumerable: true,
+      configurable: false,
+    });
+    o._poolIdx = i;
+    return o;
+  });
 
   return {
-    // grab a free slot; returns null if pool is full
     obtain() {
-      for (const o of _items) {
-        if (!o.active) {
-          _reset(o);
-          o.active = true;
-          return o;
-        }
+      if (_freeTop === 0) {
+        console.warn('[pool] exhausted, capacity =', capacity);
+        return null;
       }
-      console.warn('[pool] exhausted, capacity =', capacity);
-      return null;
+      const o = _items[_free[--_freeTop]];
+      _reset(o);
+      o.active = true;
+      return o;
     },
 
-    // release explicitly (also works to just set o.active = false)
     release(o) { o.active = false; },
 
-    // iterate active objects; callback can set active=false to free mid-loop
     forEach(fn) {
-      for (let i = 0; i < _items.length; i++) {
+      for (let i = 0; i < capacity; i++) {
         if (_items[i].active) fn(_items[i], i);
       }
     },
 
-    // update all active, release if fn returns false
     update(fn) {
-      for (let i = 0; i < _items.length; i++) {
-        if (_items[i].active && fn(_items[i]) === false) _items[i].active = false;
+      for (let i = 0; i < capacity; i++) {
+        const o = _items[i];
+        if (o.active && fn(o) === false) o.active = false;
       }
     },
 
-    get active() { let n = 0; for (const o of _items) if (o.active) n++; return n; },
+    get active()   { return capacity - _freeTop; },
     get capacity() { return capacity; },
-    get all() { return _items; },
+    get all()      { return _items; },
   };
 }

@@ -2,7 +2,7 @@
 // Outputs view + projection matrices for the renderer.
 // No allocation in update() — all scratch space pre-allocated.
 
-import { m4, v3, DEG } from './math.js';
+import { m4, v3, DEG } from '../utils/math.js';
 
 export function camera3d({
   fov    = 60 * DEG,

@@ -1,7 +1,7 @@
 // Fixed-timestep game loop with variable rendering
 // update runs at fixed STEP intervals; render gets interpolation alpha
 
-const STEP = 1000 / 60; // 16.67ms fixed physics step
+let STEP = 1000 / 60; // 16.67ms fixed physics step
 
 let _update = null, _render = null;
 let _rafId = null, _last = 0, _acc = 0;
@@ -53,10 +53,13 @@ export const loop = {
     _rafId = null;
   },
 
-  pause() { _running = false; },
+  pause() {
+    _running = false;
+    if (_rafId) { cancelAnimationFrame(_rafId); _rafId = null; }
+  },
 
   resume() {
-    if (_rafId) return;
+    if (_running) return;
     _running = true;
     _last = performance.now();
     _rafId = requestAnimationFrame(tick);
@@ -66,6 +69,5 @@ export const loop = {
   get frame() { return _frameCount; },
   get running() { return _running; },
 
-  // override fixed step (call before start)
-  setStep(ms) { Object.assign({ STEP: ms }); }, // intentionally simple
+  setStep(ms) { STEP = ms; },
 };

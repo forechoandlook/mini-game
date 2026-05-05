@@ -114,7 +114,6 @@ export function particles(capacity = 256) {
         if (!active[i]) continue;
         life[i] -= dt;
         if (life[i] <= 0) { active[i] = 0; continue; }
-        vx[i] += 0;
         vy[i] += grav[i] * dt;
         px[i] += vx[i] * dt;
         py[i] += vy[i] * dt;

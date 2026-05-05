@@ -15,7 +15,7 @@
 //   r.draw(mesh, modelMat)
 //   r.end()
 
-import { m4, v3 } from './math.js';
+import { m4, v3 } from '../utils/math.js';
 
 // ── Built-in shader sources ───────────────────────────────────────────────────
 const VERT_DEFAULT = `#version 300 es
@@ -151,7 +151,7 @@ export function renderer(canvas) {
         return b;
       }
 
-      _buf(positions, 0, 3);
+      const posBuf = _buf(positions, 0, 3);
       if (normals) _buf(normals, 1, 3);
       else { gl.disableVertexAttribArray(1); }
       if (uvs) _buf(uvs, 2, 2);
@@ -167,12 +167,14 @@ export function renderer(canvas) {
 
       gl.bindVertexArray(null);
 
-      return { vao, ibo, indexCount, vertCount, _update(data) {
-        gl.bindVertexArray(vao);
-        gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-        gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
-        gl.bindVertexArray(null);
-      }};
+      return { vao, ibo, indexCount, vertCount,
+        // update positions in-place — reuses the existing VBO, no GPU allocation
+        _update(data) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+          gl.bufferSubData(gl.ARRAY_BUFFER, 0, data);
+          vertCount = data.length / 3;
+        },
+      };
     },
 
     // upload texture → GL texture handle

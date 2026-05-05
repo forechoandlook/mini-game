@@ -14,8 +14,6 @@
 // Channels let you group volume (e.g. 'sfx', 'music', 'ui'):
 //   audio.channel('sfx').volume = 0.6
 
-import { signal } from '../../mini-react/src/core.js';
-
 let _ctx = null;
 function _ac() {
   if (!_ctx) {
@@ -67,8 +65,6 @@ let   _masterVol  = 1;
 let _bgmNode  = null;
 let _bgmGain  = null;
 let _bgmKey   = null;
-
-export const masterVolume = signal(1);  // reactive
 
 function _master() {
   if (!_masterGain) {
@@ -233,7 +229,6 @@ export const audio = {
   get masterVolume() { return _masterVol; },
   set masterVolume(v) {
     _masterVol = Math.max(0, Math.min(1, v));
-    masterVolume.value = _masterVol;
     _masterGain?.gain.setTargetAtTime(_masterVol, _ac().currentTime, 0.02);
   },
 

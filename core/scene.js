@@ -1,70 +1,51 @@
 // Scene stack: push/pop for overlays (pause menus, dialogs)
-// Each scene: { name, enter(data), update(dt), render(ctx, alpha), exit() }
-// Uses mini-react signals for reactive currentScene name
+// Each scene: { name, enter(data), update(dt), render(ctx, alpha), exit(), pause?(), resume?() }
 
 import { signal } from '../../mini-react/src/core.js';
 
-export const currentScene = signal(null); // reactive: bind to HUD etc.
+export const currentScene = signal(null);
 
+// stack entries: { name, def } — store name directly so pop() doesn't need to search registry
 const _stack = [];
 
-function _top() { return _stack[_stack.length - 1] ?? null; }
+function _top()    { return _stack[_stack.length - 1] ?? null; }
+function _topDef() { return _top()?.def ?? null; }
 
 export const scene = {
-  // register a scene definition
   _registry: new Map(),
 
   define(name, def) {
     scene._registry.set(name, def);
   },
 
-  // replace entire stack (transition to new scene)
   go(name, data) {
-    while (_stack.length) {
-      const s = _stack.pop();
-      s.exit?.();
-    }
+    while (_stack.length) _stack.pop()?.def?.exit?.();
     const def = scene._registry.get(name);
     if (!def) throw new Error(`[scene] unknown: ${name}`);
-    _stack.push(def);
+    _stack.push({ name, def });
     currentScene.value = name;
     def.enter?.(data);
   },
 
-  // push on top (overlay: pause screen, dialog)
   push(name, data) {
     const def = scene._registry.get(name);
     if (!def) throw new Error(`[scene] unknown: ${name}`);
-    _top()?.pause?.();
-    _stack.push(def);
+    _topDef()?.pause?.();
+    _stack.push({ name, def });
     currentScene.value = name;
     def.enter?.(data);
   },
 
-  // return to scene below
   pop(data) {
-    const s = _stack.pop();
-    s?.exit?.(data);
-    const top = _top();
-    if (top) {
-      currentScene.value = scene._registry
-        ? [...scene._registry.entries()].find(([, v]) => v === top)?.[0] ?? null
-        : null;
-      top.resume?.();
-    } else {
-      currentScene.value = null;
-    }
+    _stack.pop()?.def?.exit?.(data);
+    const entry = _top();
+    currentScene.value = entry?.name ?? null;
+    entry?.def?.resume?.();
   },
 
-  // called by loop each fixed step
-  update(dt) { _top()?.update?.(dt); },
+  update(dt)         { _topDef()?.update?.(dt); },
+  render(ctx, alpha) { for (const { def } of _stack) def.render?.(ctx, alpha); },
 
-  // called by loop each render frame
-  render(ctx, alpha) {
-    // render bottom-up so overlays draw on top
-    for (const s of _stack) s.render?.(ctx, alpha);
-  },
-
-  get current() { return _top(); },
-  get depth() { return _stack.length; },
+  get current() { return _topDef(); },
+  get depth()   { return _stack.length; },
 };
