@@ -164,6 +164,105 @@ export function circleRectMtv(c, r) {
   return { nx: dx/d, ny: dy/d, pen: c.r - d };
 }
 
+// ── Capsule collision ─────────────────────────────────────────────────────────
+// Capsule: two circles of radius r connected by a line segment.
+// Described as { x, y, r, h } where (x,y) is the bottom-center,
+// h is the full height (must be >= 2r). The segment runs from
+// (x, y - r) to (x, y - h + r), i.e. top and bottom sphere centers.
+//
+// This is the recommended shape for character controllers:
+// slides along walls and floors without catching on corners.
+
+// Returns the closest point on segment (ax,ay)→(bx,by) to point (px,py).
+function _closestPtOnSeg(ax, ay, bx, by, px, py) {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx*dx + dy*dy;
+  if (len2 === 0) return { x: ax, y: ay };
+  const t = Math.max(0, Math.min(1, ((px-ax)*dx + (py-ay)*dy) / len2));
+  return { x: ax + t*dx, y: ay + t*dy };
+}
+
+function _capEnds(cap) {
+  return {
+    ax: cap.x, ay: cap.y - cap.r,
+    bx: cap.x, by: cap.y - cap.h + cap.r,
+  };
+}
+
+// Boolean overlap: capsule vs capsule.
+export function capsuleVsCapsule(a, b) {
+  const ea = _capEnds(a), eb = _capEnds(b);
+  // closest points between the two segments
+  const pa = _closestPtOnSeg(ea.ax, ea.ay, ea.bx, ea.by, eb.ax, eb.ay);
+  const pb = _closestPtOnSeg(eb.ax, eb.ay, eb.bx, eb.by, pa.x, pa.y);
+  const pa2 = _closestPtOnSeg(ea.ax, ea.ay, ea.bx, ea.by, pb.x, pb.y);
+  const dx = pa2.x - pb.x, dy = pa2.y - pb.y;
+  const rr = a.r + b.r;
+  return dx*dx + dy*dy < rr*rr;
+}
+
+// MTV: capsule vs capsule → { nx, ny, pen } or null.
+export function capsuleMtv(a, b) {
+  const ea = _capEnds(a), eb = _capEnds(b);
+  const pa = _closestPtOnSeg(ea.ax, ea.ay, ea.bx, ea.by, eb.ax, eb.ay);
+  const pb = _closestPtOnSeg(eb.ax, eb.ay, eb.bx, eb.by, pa.x, pa.y);
+  const pa2 = _closestPtOnSeg(ea.ax, ea.ay, ea.bx, ea.by, pb.x, pb.y);
+  const dx = pa2.x - pb.x, dy = pa2.y - pb.y;
+  const d2 = dx*dx + dy*dy;
+  const rr = a.r + b.r;
+  if (d2 >= rr*rr) return null;
+  const d = Math.sqrt(d2) || 0.001;
+  return { nx: dx/d, ny: dy/d, pen: rr - d };
+}
+
+// Boolean overlap: capsule vs AABB rect.
+export function capsuleVsRect(cap, r) {
+  const e = _capEnds(cap);
+  // expand rect by cap.r (Minkowski sum), then check segment vs expanded rect
+  const rx = r.x - cap.r, ry = r.y - cap.r;
+  const rw = r.w + cap.r*2, rh = r.h + cap.r*2;
+  // closest point on segment to rect center
+  const cx = r.x + r.w/2, cy = r.y + r.h/2;
+  const pt = _closestPtOnSeg(e.ax, e.ay, e.bx, e.by, cx, cy);
+  return circleVsRect({ x: pt.x, y: pt.y, r: cap.r }, r);
+}
+
+// MTV: capsule vs AABB rect → { nx, ny, pen } or null.
+export function capsuleRectMtv(cap, r) {
+  const e = _capEnds(cap);
+  // find closest point on capsule segment to rect, then treat as circle
+  const cx = r.x + r.w/2, cy = r.y + r.h/2;
+  const pt = _closestPtOnSeg(e.ax, e.ay, e.bx, e.by, cx, cy);
+  return circleRectMtv({ x: pt.x, y: pt.y, r: cap.r }, r);
+}
+
+// Move a capsule character against a list of static rects.
+// Mutates cap.x, cap.y; returns { grounded }.
+// Mirrors move() but uses capsule shape so no corner-catching.
+export function moveCapsule(cap, dt, obstacles = []) {
+  cap.x += cap.vx * dt;
+  cap.y += cap.vy * dt;
+  let grounded = false;
+  for (const obs of obstacles) {
+    const m = capsuleRectMtv(cap, obs);
+    if (!m) continue;
+    if (obs.oneWay) {
+      if (m.ny >= 0) continue;
+      if (cap.vy < 0) continue;
+    }
+    cap.x += m.nx * m.pen;
+    cap.y += m.ny * m.pen;
+    if (m.nx !== 0) { cap.vx = -cap.vx * (cap.restitution ?? 0); }
+    if (m.ny !== 0) {
+      const bounce = -cap.vy * (cap.restitution ?? 0);
+      cap.vy = Math.abs(bounce) < 1 ? 0 : bounce;
+      if (m.ny < 0) { grounded = true; cap.vx *= (cap.friction ?? 0.85); }
+    }
+  }
+  cap.grounded = grounded;
+  return { grounded };
+}
+
 // Raycast against list of rects; returns nearest { t, nx, ny, hit } or null
 // ray: { x, y, dx, dy, len }
 export function raycast(ray, rects) {

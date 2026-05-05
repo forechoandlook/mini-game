@@ -41,6 +41,7 @@ import { loop, canvas, input, mouse, axis, scene, currentScene,
 - `time.rawDt` — loop 每 tick 写入的原始帧时间（未缩放），用于需要挂钟时间的场景（如将 `time.scale` 自身 tween 回 1）
 - `timer.after(delay, fn)` — 延迟回调（秒）；`timer.every(interval, fn)` — 周期回调（fn 返回 false 取消）；`timer.update(dt)` 需在 update 内调用；`timer.clear()` 场景 exit 时清空
 - `save(key, data)` / `load(key, def)` / `deleteSave(key)` — localStorage JSON 存档；`savedSignal(key, def)` — 写入即自动持久化的 signal
+- `events.on(name, fn)` → 返回 unsubscribe fn；`events.once` / `events.off` / `events.emit(name, data)` / `events.clear(name?)` — 全局事件总线；场景 exit 时 clear 避免泄漏
 
 ---
 
@@ -54,6 +55,13 @@ import { loop, canvas, input, mouse, axis, scene, currentScene,
 - `random.seed(n)` — 设置 mulberry32 PRNG 种子；`random.next/float/int/pick/shuffle/chance`
 - `tweens.to(obj, props, duration, easing)` — 返回 `{ stop(), onDone(fn) }`；easing: `linear/easeIn/easeOut/easeInOut/easeOutCubic/easeOutBack/easeOutBounce/easeOutElastic`；`tweens.update(dt)` 需每帧调用；`tweens.clear()` 场景 exit 清空
 - `assets.getImage(key)` / `assets.getAudio(key)` / `assets.getJSON(key)` — 类型化快捷
+- `stateMachine(states, initial)` — 有限状态机；`fsm.go(name)` 触发 exit→enter；`fsm.update(dt)` 驱动当前状态；`fsm.state` / `fsm.is(name)` / `fsm.tryGo(name, cond)`
+- `pathfinder(cols, rows)` — 网格 A\* 寻路；`pf.setWalkable(x,y,bool)` / `pf.loadGrid(grid2d)`；`pf.find(sx,sy,ex,ey)` → `[{x,y}]`；`pf.findSmooth(...)` 折线优化（视线裁剪）
+- `rooms({ cols,rows,minRoom,maxRoom,splits,rng })` — BSP 地牢，返回 `{ rooms,corridors,grid }`
+- `cellular({ cols,rows,fillRatio,iterations,rng })` — 细胞自动机洞穴，返回 `{ grid }`
+- `drunkardWalk({ cols,rows,steps,rng })` — 醉汉游走隧道
+- `noise1d(x, scale, seed)` / `noise2d(x,y, scale, seed)` — 平滑值噪声 0..1（地形高度 / 高度图）
+- `scatter({ count,areaX,areaY,areaW,areaH,radius,avoid,rng })` — 避免重叠散布物品，返回 `[{x,y}]`
 
 ---
 
@@ -68,6 +76,10 @@ import { loop, canvas, input, mouse, axis, scene, currentScene,
 - `circleMtv(a,b)` — `{ nx,ny,pen }` 圆-圆最小分离向量
 - `circleVsRect(c,r)` — boolean，圆 vs AABB `{x,y,w,h}`
 - `circleRectMtv(c,r)` — `{ nx,ny,pen }` 圆-矩形最小分离向量（含圆心在矩形内的情形）
+- **Capsule** `{ x,y,r,h, vx,vy, friction,restitution }` — 胶囊体（底部圆心为原点，高度 h≥2r）；不卡墙角，推荐用于角色控制器
+- `capsuleVsCapsule(a,b)` / `capsuleMtv(a,b)` — 胶囊-胶囊检测
+- `capsuleVsRect(cap,r)` / `capsuleRectMtv(cap,r)` — 胶囊-矩形检测
+- `moveCapsule(cap, dt, obstacles)` — 移动+碰撞解算，等价于 `move()` 但用胶囊形状
 - `camera({ w,h, lerp:0.05, bounds:{x,y,w,h} })` — 2D 跟随相机
 - `cam.follow(target)` / `cam.update(dt)` / `cam.shake(duration, mag)`
 - `cam.begin(ctx)` … 画世界物体 … `cam.end(ctx)` — save/translate/restore 包裹
@@ -85,6 +97,7 @@ import { loop, canvas, input, mouse, axis, scene, currentScene,
 
 ## UI（Canvas 绘制，屏幕空间，在 cam.end 后调用）
 
+- `joystick({ x,y,r, floating, deadzone, opacity })` — 虚拟摇杆；`joy.init(canvas.el)` 绑定；`joy.render(ctx)` 在 HUD 层调用；`joy.axisX/axisY` 连续值 -1..1；`joy.x8()/y8()` 四方向 snap；`floating:true` 在触点处弹出
 - `hud.bar(ctx, x,y,w,h, value,max, { color,bg,border,radius })` — 血条/进度条
 - `hud.pips(ctx, x,y, size,gap, total,filled, { color,bg })` — 命数圆点
 - `hud.text(ctx, str, x,y, { font,color,align,shadow })` — 带阴影文字

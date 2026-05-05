@@ -10,11 +10,14 @@ export { pool }                              from './core/pool.js';
 export { time }                              from './core/time.js';
 export { timer }                             from './core/timer.js';
 export { save, load, deleteSave, savedSignal } from './core/save.js';
+export { events }                            from './core/events.js';
 
 // 2d
 export { spriteSheet, sprite }               from './2d/sprite.js';
 export { body, aabb, mtv, move, applyGravity, resolve, raycast,
-         circleVsCircle, circleMtv, circleVsRect, circleRectMtv } from './2d/physics.js';
+         circleVsCircle, circleMtv, circleVsRect, circleRectMtv,
+         capsuleVsCapsule, capsuleMtv, capsuleVsRect, capsuleRectMtv, moveCapsule,
+       } from './2d/physics.js';
 export { camera }                            from './2d/camera.js';
 export { tilemap }                           from './2d/tilemap.js';
 export { particles }                         from './2d/particles.js';
@@ -23,6 +26,7 @@ export { particles }                         from './2d/particles.js';
 export { hud }                               from './ui/hud.js';
 export { menu }                              from './ui/menu.js';
 export { dialog }                            from './ui/dialog.js';
+export { joystick }                          from './ui/joystick.js';
 
 // audio
 export { audio }                             from './audio/audio.js';
@@ -35,4 +39,7 @@ export { v3, v4, m4, quat, DEG, RAD }        from './utils/math.js';
 export { math }                              from './utils/math2d.js';
 export { random }                            from './utils/random.js';
 export { tweens }                            from './utils/tween.js';
+export { stateMachine }                      from './utils/fsm.js';
+export { pathfinder }                        from './utils/pathfind.js';
+export { rooms, cellular, drunkardWalk, scatter, noise1d, noise2d } from './utils/procgen.js';
 export { physics3d }                         from './3d/physics3d.js';
