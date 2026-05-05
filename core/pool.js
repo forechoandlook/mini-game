@@ -12,11 +12,10 @@ export function pool(capacity, factory, reset = null) {
   let _freeTop = capacity;
   for (let i = 0; i < capacity; i++) _free[i] = i;
 
-  const _reset = reset ?? (o => {
-    for (const k in o) {
-      if (k !== 'active' && k !== '_poolIdx' && k !== '_activeIdx') o[k] = 0;
-    }
-  });
+  // Default: no-op. Caller either provides a reset fn or sets all fields after obtain().
+  // Zeroing all fields by default breaks pools whose objects have constant geometry
+  // (r, w, h) that must survive across reuse cycles.
+  const _reset = reset ?? (() => {});
 
   // Active list for O(active) iteration; swap-remove keeps it packed.
   const _activeItems = [];

@@ -1,5 +1,5 @@
 // Flappy Bird
-import { canvas, loop, input, audio, hud, stateMachine } from '../index.js';
+import { canvas, input, audio, hud, fx, createGame, circleVsRect, savedSignal } from '../index.js';
 
 const W = 320, H = 480;
 const GRAVITY = 1400;
@@ -13,14 +13,16 @@ function beep(freq, dur = 0.05, vol = 0.3) {
 }
 
 export function start(canvasEl) {
-  canvas.init(canvasEl, { width: W, height: H, pixelated: true });
-  input.init(canvasEl);
-
-  let bird = {}, pipes = [], score = 0, best = 0;
+  return createGame(canvasEl, {
+    width: W, height: H, pixelated: true, bgColor: '#1a2a4a',
+    initial: 'menu',
+    states: (fsm) => {
+  const best = savedSignal('flappy_best', 0);
+  let bird = {}, pipes = [], score = 0;
   let spawnTimer = 0, flashTimer = 0;
 
   function resetGame() {
-    bird = { x: 80, y: H / 2, vy: 0 };
+    bird = { x: 80, y: H / 2, vy: 0, r: BIRD_R };
     pipes = []; score = 0;
     spawnTimer = SPAWN_INTERVAL * 0.6;
     flashTimer = 0;
@@ -67,14 +69,14 @@ export function start(canvasEl) {
     ctx.fillStyle = '#111'; ctx.beginPath(); ctx.arc(bx + 5, by - 3, 1.5, 0, Math.PI * 2); ctx.fill();
   }
 
-  const fsm = stateMachine({
+  return {
     menu: {
       update() { if (tapPressed()) fsm.go('play'); },
       render(ctx) {
         renderBg(ctx);
         hud.text(ctx, 'FLAPPY BIRD',         W / 2, 155, { font: 'bold 26px monospace', color: '#fff',    align: 'center' });
         hud.text(ctx, 'TAP / SPACE to jump', W / 2, 195, { font: '13px monospace',      color: '#aaa',    align: 'center' });
-        if (best > 0) hud.text(ctx, `BEST: ${best}`, W / 2, 232, { font: '13px monospace', color: '#ffcc00', align: 'center' });
+        if (best.value > 0) hud.text(ctx, `BEST: ${best.value}`, W / 2, 232, { font: '13px monospace', color: '#ffcc00', align: 'center' });
       },
     },
 
@@ -89,7 +91,7 @@ export function start(canvasEl) {
 
         if (bird.y + BIRD_R >= H) {
           bird.y = H - BIRD_R;
-          if (score > best) best = score;
+          if (score > best.value) best.value = score;
           flashTimer = 0.3; beep(180, 0.25, 0.5); fsm.go('dead'); return;
         }
 
@@ -99,9 +101,9 @@ export function start(canvasEl) {
         for (const p of pipes) {
           p.x -= PIPE_SPEED * dt;
           if (!p.scored && p.x + PIPE_W < bird.x) { p.scored = true; score++; beep(880, 0.04, 0.2); }
-          if (bird.x + BIRD_R > p.x && bird.x - BIRD_R < p.x + PIPE_W &&
-              (bird.y - BIRD_R < p.topH || bird.y + BIRD_R > p.topH + PIPE_GAP)) {
-            if (score > best) best = score;
+          if (circleVsRect(bird, { x: p.x, y: 0,               w: PIPE_W, h: p.topH }) ||
+              circleVsRect(bird, { x: p.x, y: p.topH + PIPE_GAP, w: PIPE_W, h: H    })) {
+            if (score > best.value) best.value = score;
             flashTimer = 0.3; beep(180, 0.25, 0.5); fsm.go('dead'); return;
           }
         }
@@ -123,21 +125,16 @@ export function start(canvasEl) {
         renderBird(ctx, flashTimer <= 0.15);
         hud.score(ctx, score, W / 2, 48, { digits: 1, font: 'bold 28px monospace', color: '#fff', align: 'center' });
         if (flashTimer > 0) {
-          ctx.fillStyle = `rgba(255,255,255,${flashTimer * 2})`; ctx.fillRect(0, 0, W, H);
+          fx.flash(ctx, flashTimer, 0.3, { color: '#fff' });
         } else {
           hud.fade(ctx, 0.55);
           hud.text(ctx, 'GAME OVER',                    W / 2, H / 2 - 32, { font: 'bold 22px monospace', color: '#fff', align: 'center' });
-          hud.text(ctx, `Score: ${score}  Best: ${best}`, W / 2, H / 2 + 2,  { font: '14px monospace',      color: '#aaa', align: 'center' });
+          hud.text(ctx, `Score: ${score}  Best: ${best.value}`, W / 2, H / 2 + 2,  { font: '14px monospace',      color: '#aaa', align: 'center' });
           hud.text(ctx, 'TAP to restart',               W / 2, H / 2 + 28, { font: '13px monospace',      color: '#888', align: 'center' });
         }
       },
     },
-  }, 'menu');
-
-  loop.start(dt => { fsm.update(dt); input.flush(); }, () => {
-    canvas.clear('#1a2a4a');
-    fsm.render(canvas.ctx);
+  };
+    },
   });
-
-  return () => { loop.stop(); canvas.clear('#0a0a0a'); };
 }

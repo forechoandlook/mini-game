@@ -4,22 +4,26 @@
 export { loop }                              from './core/loop.js';
 export { canvas }                            from './core/canvas.js';
 export { input, mouse, axis, keys }          from './core/input.js';
-export { scene, currentScene }               from './core/scene.js';
 export { assets, loadProgress, loadError }   from './core/assets.js';
 export { pool }                              from './core/pool.js';
 export { time }                              from './core/time.js';
 export { timer }                             from './core/timer.js';
 export { save, load, deleteSave, savedSignal } from './core/save.js';
 export { events }                            from './core/events.js';
+export { createGame }                        from './core/game.js';
 
 // 2d
 export { spriteSheet, sprite }               from './2d/sprite.js';
-export { body, aabb, mtv, move, applyGravity, resolve, raycast,
+export { draw }                              from './2d/draw.js';
+export { fx }                                from './2d/fx.js';
+export { body, aabb, mtv, bounce, move, applyGravity, stepRotation, applyAngularImpulse,
+         bouncePaddle, resolve, raycast,
          circleVsCircle, circleMtv, circleVsRect, circleRectMtv,
-         capsuleVsCapsule, capsuleMtv, capsuleVsRect, capsuleRectMtv, moveCapsule,
+         capsuleVsCapsule, capsuleMtv, capsuleVsRect, capsuleRectMtv, moveCapsule, moveCircle,
        } from './2d/physics.js';
 export { camera }                            from './2d/camera.js';
 export { tilemap }                           from './2d/tilemap.js';
+export { parallax }                          from './2d/parallax.js';
 export { particles }                         from './2d/particles.js';
 
 // ui

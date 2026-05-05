@@ -38,22 +38,38 @@ export function body({
   x = 0, y = 0, w = 16, h = 16,
   vx = 0, vy = 0,
   gravity = GRAVITY,
-  friction = 0.85,    // horizontal damping when grounded
-  restitution = 0,    // bounciness 0..1
+  friction = 0.85,       // horizontal damping when grounded
+  restitution = 0,       // bounciness 0..1
   isStatic = false,
+  // rotation (visual + angular physics; collision shape remains AABB/circle)
+  angle = 0,
+  angularVelocity = 0,
+  angularDamping  = 1,   // fraction of angularVelocity retained per second (1 = no damping)
 } = {}) {
   return {
     x, y, w, h,
     vx, vy,
-    gravity,
-    friction,
-    restitution,
-    isStatic,
+    gravity, friction, restitution, isStatic,
+    angle, angularVelocity, angularDamping,
     grounded: false,
-    // convenience rect for aabb/mtv calls
     get rect() { return { x: this.x, y: this.y, w: this.w, h: this.h }; },
   };
 }
+
+// Integrate angular velocity → angle, with optional damping.
+// Call once per frame alongside applyGravity / move.
+export function stepRotation(b, dt) {
+  b.angularVelocity = math_expDecay(b.angularVelocity, b.angularDamping, dt);
+  b.angle += b.angularVelocity * dt;
+}
+
+// Instantly add angular velocity (e.g. on collision impact).
+export function applyAngularImpulse(b, impulse) {
+  b.angularVelocity += impulse;
+}
+
+// Internal helper (avoids importing math2d to keep physics self-contained)
+function math_expDecay(v, retain, dt) { return v * Math.pow(retain, dt); }
 
 // ── Step functions ────────────────────────────────────────────────────────────
 
@@ -62,9 +78,78 @@ export function applyGravity(b, dt) {
   b.vy += b.gravity * dt;
 }
 
-// Move body by velocity, then resolve against an array of static rect obstacles.
+// Curved-paddle bounce: models a cylindrically curved surface whose normal tilts toward the edges.
+// Works for both rect balls (uses aabb) and circle balls (uses circleVsRect, ball needs .r).
+//
+// direction: where the ball exits after the hit
+//   'right' | 'left'  — vertical paddle (pong-style, angle varies with y hit position)
+//   'up'    | 'down'  — horizontal paddle (breakout-style, angle varies with x hit position)
+// spread:       max deflection angle at paddle edge, radians (default ≈67°)
+// speedGain:    speed multiplier per hit (1 = no change)
+// maxSpeed:     speed cap in px/s
+// minNormal:    minimum speed component in the exit direction (breakout: prevent near-flat angles)
+// Returns true if collision occurred, false otherwise.
+export function bouncePaddle(ball, paddle, {
+  direction  = 'right',
+  spread     = Math.PI * 0.75 / 2,
+  speedGain  = 1,
+  maxSpeed   = Infinity,
+  minNormal  = 0,
+} = {}) {
+  const isCircle = ball.r != null;
+  const hit      = isCircle ? circleVsRect(ball, paddle) : aabb(ball, paddle);
+  if (!hit) return false;
+
+  const bw    = isCircle ? ball.r * 2 : ball.w;
+  const bh    = isCircle ? ball.r * 2 : ball.h;
+  const bcx   = ball.x + (isCircle ? ball.r : ball.w / 2);
+  const bcy   = ball.y + (isCircle ? ball.r : ball.h / 2);
+  const speed = Math.min(Math.hypot(ball.vx, ball.vy) * speedGain, maxSpeed);
+
+  if (direction === 'right' || direction === 'left') {
+    // vertical paddle: angle from y hit position
+    const rel   = (bcy - (paddle.y + paddle.h / 2)) / (paddle.h / 2);
+    const angle = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, rel * spread));
+    const sign  = direction === 'right' ? 1 : -1;
+    ball.vx = sign  * speed * Math.cos(angle);
+    ball.vy = speed * Math.sin(angle);
+    ball.x  = direction === 'right' ? paddle.x + paddle.w : paddle.x - bw;
+  } else {
+    // horizontal paddle: angle from x hit position
+    const rel   = (bcx - (paddle.x + paddle.w / 2)) / (paddle.w / 2);
+    const angle = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, rel * spread));
+    const sign  = direction === 'up' ? -1 : 1;
+    ball.vx = speed * Math.sin(angle);
+    ball.vy = sign * speed * Math.cos(angle);
+    if (Math.abs(ball.vy) < minNormal) ball.vy = sign * minNormal;
+    ball.y  = direction === 'up' ? paddle.y - bh : paddle.y + paddle.h;
+  }
+  return true;
+}
+
+// Pure elastic collision: move rect body by velocity and bounce off static obstacles.
+// restitution per obstacle overrides body default.
+// Returns array of hit MTV objects — caller can use hits to trigger sound/effects.
+// No platformer extras (no grounded, no friction, no micro-stop threshold).
+export function bounce(b, dt, obstacles = []) {
+  if (b.isStatic) return [];
+  b.x += b.vx * dt;
+  b.y += b.vy * dt;
+  const hits = [];
+  for (const obs of obstacles) {
+    const m = mtv(b, obs);
+    if (!m) continue;
+    b.x += m.dx; b.y += m.dy;
+    const r = obs.restitution ?? b.restitution ?? 1;
+    if (m.nx !== 0) b.vx = -b.vx * r;
+    if (m.ny !== 0) b.vy = -b.vy * r;
+    hits.push({ ...m, obs });
+  }
+  return hits;
+}
+
+// Platformer move: gravity-aware, grounded detection, friction, one-way platforms.
 // obstacles: [{ x, y, w, h, oneWay? }]
-// oneWay = true: only collide from above (platforms)
 export function move(b, dt, obstacles = []) {
   if (b.isStatic) return;
   b.grounded = false;
@@ -76,11 +161,9 @@ export function move(b, dt, obstacles = []) {
     const m = mtv(b, obs);
     if (!m) continue;
 
-    // one-way platform: only block when falling onto top
-    // ny === -1 means MTV pushes body upward (body is above obstacle center)
     if (obs.oneWay) {
-      if (m.ny !== -1) continue;   // not coming from above
-      if (b.vy < 0)    continue;   // moving upward, pass through
+      if (m.ny !== -1) continue;
+      if (b.vy < 0)    continue;
     }
 
     b.x += m.dx;
@@ -88,12 +171,9 @@ export function move(b, dt, obstacles = []) {
 
     if (m.nx !== 0) { b.vx = -b.vx * b.restitution; }
     if (m.ny !== 0) {
-      const bounce = -b.vy * b.restitution;
-      b.vy = Math.abs(bounce) < 1 ? 0 : bounce;
-      if (m.ny === -1) {          // landed on top of obstacle (pushed upward)
-        b.grounded = true;
-        b.vx *= b.friction;
-      }
+      const bv = -b.vy * b.restitution;
+      b.vy = Math.abs(bv) < 1 ? 0 : bv;
+      if (m.ny === -1) { b.grounded = true; b.vx *= b.friction; }
     }
   }
 }
@@ -261,6 +341,32 @@ export function moveCapsule(cap, dt, obstacles = []) {
   }
   cap.grounded = grounded;
   return { grounded };
+}
+
+// Move a circle ball against a list of static rects (walls, bricks, paddle).
+// Mutates c.x, c.y, c.vx, c.vy.
+// Returns array of { nx, ny, pen, obs } for every collision that fired this frame —
+// caller can use hits.length > 0 to trigger sound/effects.
+// c: { x, y, r, vx, vy, restitution? }   restitution defaults to 1 (perfect bounce)
+export function moveCircle(c, dt, obstacles = []) {
+  c.x += c.vx * dt;
+  c.y += c.vy * dt;
+  const hits = [];
+  for (const obs of obstacles) {
+    const m = circleRectMtv(c, obs);
+    if (!m) continue;
+    c.x += m.nx * m.pen;
+    c.y += m.ny * m.pen;
+    // reflect velocity along the collision normal
+    const restitution = obs.restitution ?? c.restitution ?? 1;
+    const dot = c.vx * m.nx + c.vy * m.ny;
+    if (dot < 0) {
+      c.vx -= (1 + restitution) * dot * m.nx;
+      c.vy -= (1 + restitution) * dot * m.ny;
+    }
+    hits.push({ ...m, obs });
+  }
+  return hits;
 }
 
 // Raycast against list of rects; returns nearest { t, nx, ny, hit } or null

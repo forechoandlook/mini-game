@@ -18,6 +18,11 @@ export function camera({
   lerp      = 0.1,     // follow smoothing 0=instant 1=never
   bounds    = null,     // { x, y, w, h } world bounds to clamp within, or null
   zoom      = 1,
+  followX   = true,    // whether to follow target horizontally
+  followY   = true,    // whether to follow target vertically
+  // deadzone: target must move outside this rect (relative to viewport center)
+  // before camera starts tracking. e.g. { x:80, y:40 } = ±80px horizontal dead band
+  deadzone  = null,
 } = {}) {
   // current camera center in world space (reactive for minimap etc.)
   const pos = { x: w / 2, y: h / 2 };
@@ -52,9 +57,22 @@ export function camera({
       if (_target) {
         const tx = (_target.x ?? 0) + (_target.w ?? 0) / 2;
         const ty = (_target.y ?? 0) + (_target.h ?? 0) / 2;
-        const k = 1 - Math.pow(lerp, dt * 60);  // frame-rate independent lerp
-        pos.x += (tx - pos.x) * k;
-        pos.y += (ty - pos.y) * k;
+        const k  = 1 - Math.pow(lerp, dt * 60);
+
+        if (deadzone) {
+          // only move camera when target exits the dead band
+          if (followX) {
+            const dx = tx - pos.x;
+            if (Math.abs(dx) > deadzone.x) pos.x += (dx - Math.sign(dx) * deadzone.x) * k;
+          }
+          if (followY) {
+            const dy = ty - pos.y;
+            if (Math.abs(dy) > deadzone.y) pos.y += (dy - Math.sign(dy) * deadzone.y) * k;
+          }
+        } else {
+          if (followX) pos.x += (tx - pos.x) * k;
+          if (followY) pos.y += (ty - pos.y) * k;
+        }
       }
       _clamp();
 

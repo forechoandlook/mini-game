@@ -16,9 +16,10 @@ export function tilemap({ tileW = 16, tileH = 16, img = null, solidIds = null } 
   // solidIds: Set or null (null = all non-zero are solid)
   const _solid = solidIds instanceof Set ? solidIds : null;
 
-  let _layers  = [];   // [{name, grid, opacity, visible}]
-  let _mapW    = 0, _mapH = 0;
-  let _animated = new Map();  // tileId → { frames:[{id,duration}], t:0, cur:0 }
+  let _layers    = [];             // [{name, grid, opacity, visible}]
+  let _objLayers = new Map();     // name → [{id,name,type,x,y,width,height,properties}]
+  let _mapW      = 0, _mapH = 0;
+  let _animated  = new Map();     // tileId → { frames:[{id,duration}], t:0, cur:0 }
 
   function _isSolid(id) {
     if (id === 0) return false;
@@ -56,13 +57,20 @@ export function tilemap({ tileW = 16, tileH = 16, img = null, solidIds = null } 
       _mapW = json.width;
       _mapH = json.height;
       for (const layer of json.layers ?? []) {
-        if (layer.type !== 'tilelayer') continue;
-        // Tiled stores data as flat array, convert to 2D
-        const grid = [];
-        for (let r = 0; r < _mapH; r++) {
-          grid.push(layer.data.slice(r * _mapW, (r + 1) * _mapW));
+        if (layer.type === 'tilelayer') {
+          const grid = [];
+          for (let r = 0; r < _mapH; r++)
+            grid.push(layer.data.slice(r * _mapW, (r + 1) * _mapW));
+          _layers.push({ name: layer.name, grid, opacity: layer.opacity ?? 1, visible: layer.visible !== false });
+        } else if (layer.type === 'objectgroup') {
+          // store object layers for map.objects(name)
+          _objLayers.set(layer.name, (layer.objects ?? []).map(o => ({
+            id: o.id, name: o.name, type: o.type ?? o.class ?? '',
+            x: o.x, y: o.y, width: o.width ?? 0, height: o.height ?? 0,
+            // flatten custom properties array → plain object
+            properties: Object.fromEntries((o.properties ?? []).map(p => [p.name, p.value])),
+          })));
         }
-        _layers.push({ name: layer.name, grid, opacity: layer.opacity ?? 1, visible: layer.visible !== false });
       }
 
       // parse animated tiles from tileset
@@ -162,6 +170,11 @@ export function tilemap({ tileW = 16, tileH = 16, img = null, solidIds = null } 
       const layer = layerName ? _layers.find(l => l.name === layerName) : _layers[0];
       if (layer?.grid[r]) layer.grid[r][c] = id;
     },
+
+    // Return objects from a Tiled objectgroup layer.
+    // Useful for spawning enemies, coins, player start, portals, etc.
+    // map.objects('enemies') → [{id, name, type, x, y, width, height, properties}]
+    objects(layerName) { return _objLayers.get(layerName) ?? []; },
 
     getLayer(name) { return _layers.find(l => l.name === name) ?? null; },
     layers: _layers,

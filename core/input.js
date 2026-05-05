@@ -16,6 +16,7 @@ const ALIASES = {
 
 // ── raw sets (updated by DOM events, not frame-snapshotted) ──────────────────
 const _held    = new Set();   // currently held keys
+const _heldTimers = new Map(); // key → { t, phase } for held() DAS
 const _jdown   = new Set();   // keys pressed this frame
 const _jup     = new Set();   // keys released this frame
 
@@ -123,6 +124,20 @@ export const input = {
   pressed(key) { return _anyIn(_held,  _resolve(key)); },
   down(key)    { return _anyIn(_jdown, _resolve(key)); },
   up(key)      { return _anyIn(_jup,   _resolve(key)); },
+
+  // Delayed auto-shift: fires on first press, then again after firstDelay,
+  // then repeatedly every repeatDelay. Mirrors keyboard typematic behaviour.
+  // Usage: if (input.held('left', dt)) moveLeft();
+  held(key, dt, { firstDelay = 0.17, repeatDelay = 0.05 } = {}) {
+    if (!input.pressed(key)) { _heldTimers.delete(key); return false; }
+    if (input.down(key)) { _heldTimers.set(key, { t: 0, phase: 0 }); return true; }
+    const s = _heldTimers.get(key) ?? { t: 0, phase: 0 };
+    if (!_heldTimers.has(key)) _heldTimers.set(key, s);
+    s.t += dt;
+    const threshold = s.phase === 0 ? firstDelay : repeatDelay;
+    if (s.t >= threshold) { s.t -= threshold; s.phase = 1; return true; }
+    return false;
+  },
 
   axisX() { return (input.pressed('right') ? 1 : 0) - (input.pressed('left') ? 1 : 0); },
   axisY() { return (input.pressed('down')  ? 1 : 0) - (input.pressed('up')   ? 1 : 0); },

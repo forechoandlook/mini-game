@@ -1,5 +1,5 @@
 // Snake — with difficulty selection
-import { canvas, loop, input, audio, hud, menu, stateMachine } from '../index.js';
+import { canvas, input, audio, hud, fx, menu, createGame, savedSignal } from '../index.js';
 
 const W = 320, H = 320;
 const CELL = 16;
@@ -16,10 +16,12 @@ function beep(freq, dur = 0.06, vol = 0.3) {
 }
 
 export function start(canvasEl) {
-  canvas.init(canvasEl, { width: W, height: H, pixelated: true });
-  input.init(canvasEl);
-
-  let snake, dir, nextDir, food, score, best = 0;
+  return createGame(canvasEl, {
+    width: W, height: H, pixelated: true, bgColor: '#0d1117',
+    initial: 'menu',
+    states: (fsm) => {
+  const best = savedSignal('snake_best', 0);
+  let snake, dir, nextDir, food, score;
   let moveTimer, moveInterval, diffIdx = 1;
   let flashTimer = 0;
 
@@ -76,14 +78,14 @@ export function start(canvasEl) {
     hud.text(ctx, DIFFICULTIES[diffIdx].label, W - 6, 14, { font: '12px monospace', color: '#444', align: 'right' });
   }
 
-  const fsm = stateMachine({
+  return {
     menu: {
       enter()     { diffMenu.index = diffIdx; },
       update(dt)  { mainMenu.update(dt); },
       render(ctx) {
         renderGrid(ctx);
         hud.text(ctx, 'SNAKE', W / 2, 96, { font: 'bold 24px monospace', color: '#fff', align: 'center' });
-        if (best > 0) hud.text(ctx, `BEST: ${best}`, W / 2, 122, { font: '12px monospace', color: '#ffcc00', align: 'center' });
+        if (best.value > 0) hud.text(ctx, `BEST: ${best.value}`, W / 2, 122, { font: '12px monospace', color: '#ffcc00', align: 'center' });
         mainMenu.render(ctx);
       },
     },
@@ -115,7 +117,7 @@ export function start(canvasEl) {
 
         if (head.x < 0 || head.x >= COLS || head.y < 0 || head.y >= ROWS ||
             snake.some(s => s.x === head.x && s.y === head.y)) {
-          if (score > best) best = score;
+          if (score > best.value) best.value = score;
           flashTimer = 0.3; beep(180, 0.3, 0.5);
           fsm.go('gameover'); return;
         }
@@ -140,21 +142,16 @@ export function start(canvasEl) {
       render(ctx) {
         renderGrid(ctx); renderGame(ctx);
         if (flashTimer > 0) {
-          ctx.fillStyle = `rgba(255,80,80,${flashTimer * 2})`; ctx.fillRect(0, 0, W, H);
+          fx.flash(ctx, flashTimer, 0.3, { color: '#ff5050' });
         } else {
           hud.fade(ctx, 0.6);
           hud.text(ctx, 'GAME OVER',                    W / 2, H / 2 - 26, { font: 'bold 20px monospace', color: '#fff', align: 'center' });
-          hud.text(ctx, `Score: ${score}  Best: ${best}`, W / 2, H / 2 + 2,  { font: '13px monospace',      color: '#aaa', align: 'center' });
+          hud.text(ctx, `Score: ${score}  Best: ${best.value}`, W / 2, H / 2 + 2,  { font: '13px monospace',      color: '#aaa', align: 'center' });
           hud.text(ctx, 'ENTER to menu',                W / 2, H / 2 + 26, { font: '12px monospace',      color: '#888', align: 'center' });
         }
       },
     },
-  }, 'menu');
-
-  loop.start(dt => { fsm.update(dt); input.flush(); }, () => {
-    canvas.clear('#0d1117');
-    fsm.render(canvas.ctx);
+  };
+    },
   });
-
-  return () => { loop.stop(); canvas.clear('#0a0a0a'); };
 }

@@ -28,4 +28,26 @@ export const math = {
   // random helpers (non-seeded, use random.js for seeded)
   rand:       (lo=0, hi=1)       => lo + Math.random() * (hi - lo),
   randInt:    (lo, hi)           => lo + (Math.random() * (hi - lo + 1) | 0),
+
+  // Frame-rate independent exponential velocity decay.
+  // retain: fraction of speed kept per second (e.g. 0.3 → 30% speed after 1s).
+  // Usage: ship.vx = math.expDecay(ship.vx, 0.3, dt)
+  expDecay: (v, retain, dt) => v * Math.pow(retain, dt),
+
+  // Wrap an object with { x, y, r? } around a w×h play area (arcade screen wrap).
+  // Mutates obj.x / obj.y in place.
+  wrapPos(obj, w, h) {
+    const r = obj.r ?? 0;
+    if (obj.x < -r)    obj.x += w + r * 2;
+    if (obj.x > w + r) obj.x -= w + r * 2;
+    if (obj.y < -r)    obj.y += h + r * 2;
+    if (obj.y > h + r) obj.y -= h + r * 2;
+  },
+
+  // Invincibility / hit-flicker alpha. t counts down to 0.
+  // Returns oscillating alpha in [0.2, 1.0]; 1 when t <= 0.
+  flicker: (t, freq = 20) => t > 0 ? Math.sin(t * freq) * 0.4 + 0.6 : 1,
+
+  // Rotate a 2D grid (array-of-arrays) 90° clockwise. Useful for Tetris pieces.
+  rotateMatrix: grid => grid.map((row, r) => row.map((_, c) => grid[grid.length-1-c][r])),
 };

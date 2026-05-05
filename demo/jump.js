@@ -1,5 +1,5 @@
 // Infinite Jump Game — dodge obstacles, collect coins
-import { canvas, loop, input, audio, hud, stateMachine, body, applyGravity, move, aabb } from '../index.js';
+import { canvas, input, audio, hud, fx, createGame, body, applyGravity, move, aabb, circleVsRect, savedSignal } from '../index.js';
 
 const W = 400, H = 300;
 const GROUND_Y = H - 40;
@@ -15,10 +15,12 @@ function beep(freq, dur = 0.05, vol = 0.25) {
 }
 
 export function start(canvasEl) {
-  canvas.init(canvasEl, { width: W, height: H, pixelated: true });
-  input.init(canvasEl);
-
-  let player, obstacles, coins, score, best = 0, speed;
+  return createGame(canvasEl, {
+    width: W, height: H, pixelated: true, bgColor: '#1a1a2e',
+    initial: 'menu',
+    states: (fsm) => {
+  const best = savedSignal('jump_best', 0);
+  let player, obstacles, coins, score, speed;
   let spawnTimer = 0, coinTimer = 0, distance = 0;
   let bgX = 0, deathFlash = 0;
 
@@ -66,17 +68,17 @@ export function start(canvasEl) {
     ctx.fillStyle = '#fff'; ctx.fillRect(px + 5, py + 5, 5, 5); ctx.fillRect(px + 13, py + 5, 5, 5);
     ctx.fillStyle = '#111'; ctx.fillRect(px + 6, py + 6, 3, 3);  ctx.fillRect(px + 14, py + 6, 3, 3);
     hud.score(ctx, score,    10,    22, { digits: 1, font: 'bold 14px monospace', color: '#fff' });
-    hud.text(ctx, `best: ${best}`, W - 8, 22, { font: '11px monospace', color: '#555', align: 'right' });
+    hud.text(ctx, `best: ${best.value}`, W - 8, 22, { font: '11px monospace', color: '#555', align: 'right' });
   }
 
-  const fsm = stateMachine({
+  return {
     menu: {
       update()    { if (tapPressed()) fsm.go('play'); },
       render(ctx) {
         canvas.clear('#1a1a2e'); renderBg(ctx);
         hud.text(ctx, 'JUMP GAME',           W / 2, H / 2 - 32, { font: 'bold 24px monospace', color: '#fff',    align: 'center' });
         hud.text(ctx, 'SPACE / TAP to jump', W / 2, H / 2,      { font: '13px monospace',      color: '#aaa',    align: 'center' });
-        if (best > 0) hud.text(ctx, `BEST: ${best}`, W / 2, H / 2 + 28, { font: '13px monospace', color: '#ffcc00', align: 'center' });
+        if (best.value > 0) hud.text(ctx, `BEST: ${best.value}`, W / 2, H / 2 + 28, { font: '13px monospace', color: '#ffcc00', align: 'center' });
       },
     },
 
@@ -112,14 +114,13 @@ export function start(canvasEl) {
 
         for (const o of obstacles) {
           if (aabb(player, o)) {
-            if (score > best) best = score;
+            if (score > best.value) best.value = score;
             deathFlash = 0.35; beep(200, 0.3, 0.5); fsm.go('gameover'); return;
           }
         }
         for (const c of coins) {
           if (!c.alive) continue;
-          const dx = player.x + player.w / 2 - c.x, dy = player.y + player.h / 2 - c.y;
-          if (Math.hypot(dx, dy) < COIN_R + PLAYER_W / 2) { c.alive = false; score += 10; beep(880, 0.04, 0.2); }
+          if (circleVsRect({ x: c.x, y: c.y, r: COIN_R }, player)) { c.alive = false; score += 10; beep(880, 0.04, 0.2); }
         }
       },
       render(ctx) { renderGame(ctx); },
@@ -134,21 +135,16 @@ export function start(canvasEl) {
       render(ctx) {
         renderGame(ctx);
         if (deathFlash > 0) {
-          ctx.fillStyle = `rgba(255,80,80,${deathFlash * 2.5})`; ctx.fillRect(0, 0, W, H);
+          fx.flash(ctx, deathFlash, 0.35, { color: '#ff5050' });
         } else {
           hud.fade(ctx, 0.6);
           hud.text(ctx, 'GAME OVER',                    W / 2, H / 2 - 22, { font: 'bold 20px monospace', color: '#ff4444', align: 'center' });
-          hud.text(ctx, `Score: ${score}  Best: ${best}`, W / 2, H / 2 + 6,  { font: '13px monospace',      color: '#aaa',    align: 'center' });
+          hud.text(ctx, `Score: ${score}  Best: ${best.value}`, W / 2, H / 2 + 6,  { font: '13px monospace',      color: '#aaa',    align: 'center' });
           hud.text(ctx, 'SPACE to menu',                W / 2, H / 2 + 30, { font: '12px monospace',      color: '#888',    align: 'center' });
         }
       },
     },
-  }, 'menu');
-
-  loop.start(dt => { fsm.update(dt); input.flush(); }, () => {
-    canvas.clear('#1a1a2e');
-    fsm.render(canvas.ctx);
+  };
+    },
   });
-
-  return () => { loop.stop(); canvas.clear('#0a0a0a'); };
 }
