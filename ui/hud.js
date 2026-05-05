@@ -1,5 +1,6 @@
 // Canvas HUD: health bar, score, stamina bar, icon badge
 // Drawn in screen-space (after cam.end), not affected by camera transform.
+import { canvas as _canvas } from '../core/canvas.js';
 // Usage:
 //   hud.bar(ctx, x, y, w, h, value, max, { color, bg, border })
 //   hud.text(ctx, str, x, y, { font, color, align, shadow })
@@ -73,9 +74,9 @@ export const hud = {
   },
 
   // Zero-padded score number
-  score(ctx, value, x, y, { digits = 6, color = '#fff', font = '14px monospace' } = {}) {
+  score(ctx, value, x, y, { digits = 6, color = '#fff', font = '14px monospace', align = 'right' } = {}) {
     const str = String(Math.floor(value)).padStart(digits, '0');
-    hud.text(ctx, str, x, y, { font, color, align: 'right' });
+    hud.text(ctx, str, x, y, { font, color, align });
   },
 
   // Sprite icon + optional label beneath
@@ -89,7 +90,7 @@ export const hud = {
     if (alpha <= 0) return;
     ctx.globalAlpha = Math.min(1, alpha);
     ctx.fillStyle = color;
-    ctx.fillRect(0, 0, w ?? ctx.canvas.width, h ?? ctx.canvas.height);
+    ctx.fillRect(0, 0, w ?? _canvas.w, h ?? _canvas.h);
     ctx.globalAlpha = 1;
   },
 };

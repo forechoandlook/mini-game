@@ -136,7 +136,7 @@ export const assets = {
   getJSON(key) { return _cache.get(key) ?? null; },
 
   has(key)  { return _cache.has(key); },
-  clear()   { _cache.clear(); _sfxPools.clear(); _manifest.length = 0; },
+  clear()   { _cache.clear(); _sfxPools.clear(); _manifest.length = 0; loadProgress.value = 0; loadError.value = null; },
 
   get audioContext() { return _getAudioContext(); },
 };

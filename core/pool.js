@@ -1,11 +1,11 @@
-// Object pool — pre-allocate N objects, O(1) obtain/release.
+// Object pool — pre-allocate N objects, O(1) obtain/release, O(active) iteration.
 // Release via pool.release(o) OR by setting o.active = false directly.
 //
 // Usage:
 //   const bullets = pool(50, () => ({ x:0, y:0, vx:0, vy:0 }));
 //   const b = bullets.obtain();
 //   b.active = false;          // release back to pool
-//   bullets.forEach(b => {})   // iterate active objects
+//   bullets.forEach(b => {})   // iterate active objects only
 
 export function pool(capacity, factory, reset = null) {
   const _free = new Int32Array(capacity);
@@ -14,25 +14,42 @@ export function pool(capacity, factory, reset = null) {
 
   const _reset = reset ?? (o => {
     for (const k in o) {
-      if (k !== 'active' && k !== '_poolIdx') o[k] = 0;
+      if (k !== 'active' && k !== '_poolIdx' && k !== '_activeIdx') o[k] = 0;
     }
   });
 
-  // 'active' is a defineProperty setter on each item so that
-  // setting o.active = false from anywhere auto-returns the slot to the free-list
+  // Active list for O(active) iteration; swap-remove keeps it packed.
+  const _activeItems = [];
+
   const _items = Array.from({ length: capacity }, (_, i) => {
     const o = factory();
     let _active = false;
     Object.defineProperty(o, 'active', {
       get() { return _active; },
       set(v) {
-        if (_active && !v) { _active = false; _free[_freeTop++] = i; }
-        else _active = !!v;
+        if (_active && !v) {
+          _active = false;
+          _free[_freeTop++] = i;
+          // swap-remove: move last item into this slot
+          const ai = o._activeIdx;
+          const last = _activeItems[_activeItems.length - 1];
+          if (last !== o) {
+            _activeItems[ai] = last;
+            last._activeIdx = ai;
+          }
+          _activeItems.pop();
+          o._activeIdx = -1;
+        } else if (!_active && v) {
+          _active = true;
+          o._activeIdx = _activeItems.length;
+          _activeItems.push(o);
+        }
       },
       enumerable: true,
       configurable: false,
     });
     o._poolIdx = i;
+    o._activeIdx = -1;
     return o;
   });
 
@@ -50,20 +67,22 @@ export function pool(capacity, factory, reset = null) {
 
     release(o) { o.active = false; },
 
+    // Iterate backwards so swap-remove during fn(o) is safe.
     forEach(fn) {
-      for (let i = 0; i < capacity; i++) {
-        if (_items[i].active) fn(_items[i], i);
+      for (let i = _activeItems.length - 1; i >= 0; i--) {
+        const o = _activeItems[i];
+        if (o?.active) fn(o, o._poolIdx);
       }
     },
 
     update(fn) {
-      for (let i = 0; i < capacity; i++) {
-        const o = _items[i];
-        if (o.active && fn(o) === false) o.active = false;
+      for (let i = _activeItems.length - 1; i >= 0; i--) {
+        const o = _activeItems[i];
+        if (o?.active && fn(o) === false) o.active = false;
       }
     },
 
-    get active()   { return capacity - _freeTop; },
+    get active()   { return _activeItems.length; },
     get capacity() { return capacity; },
     get all()      { return _items; },
   };

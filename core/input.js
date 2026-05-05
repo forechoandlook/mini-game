@@ -46,7 +46,11 @@ export const axis = {
 };
 
 // ── helpers ───────────────────────────────────────────────────────────────────
-function _resolve(key) { return ALIASES[key] ?? [key]; }
+function _resolve(key) {
+  if (ALIASES[key]) return ALIASES[key];
+  if (key.length === 1) return [key.toLowerCase(), key.toUpperCase()];
+  return [key];
+}
 function _anyIn(set, keys) { return keys.some(k => set.has(k)); }
 
 function _updateKeySig(name) {

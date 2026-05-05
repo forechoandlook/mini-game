@@ -180,9 +180,11 @@ export const audio = {
     const gain = ac.createGain();
     osc.type            = type;
     osc.frequency.value = freq;
+    const rel = Math.min(release, duration * 0.8);
+    const atk = Math.min(attack, duration - rel);
     gain.gain.setValueAtTime(0, ac.currentTime);
-    gain.gain.linearRampToValueAtTime(volume, ac.currentTime + attack);
-    gain.gain.setValueAtTime(volume, ac.currentTime + duration - release);
+    gain.gain.linearRampToValueAtTime(volume, ac.currentTime + atk);
+    gain.gain.setValueAtTime(volume, ac.currentTime + duration - rel);
     gain.gain.linearRampToValueAtTime(0, ac.currentTime + duration);
     osc.connect(gain);
     gain.connect(_ch(channel)._gain());

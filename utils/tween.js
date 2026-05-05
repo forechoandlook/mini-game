@@ -28,7 +28,7 @@ const E = {
 const _active = [];
 
 export const tweens = {
-  to(target, props, duration, easing = 'easeOutQuad') {
+  to(target, props, duration, easing = 'easeOut') {
     const ease = E[easing] ?? E.easeOut;
     const from = {};
     for (const k in props) from[k] = target[k];

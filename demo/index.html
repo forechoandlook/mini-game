@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mini Games</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0a0a0a; color: #fff; font-family: monospace; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; }
+    #hub { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 40px; }
+    #hub h1 { font-size: 28px; letter-spacing: 4px; color: #fff; margin-bottom: 16px; }
+    .game-btn {
+      width: 260px; padding: 14px 0;
+      background: #111; border: 1px solid #333;
+      color: #ccc; font-family: monospace; font-size: 15px; letter-spacing: 2px;
+      cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .game-btn:hover { background: #222; color: #fff; border-color: #666; }
+    #game-container { display: none; flex-direction: column; align-items: center; }
+    #back-btn {
+      margin-bottom: 10px; padding: 6px 18px;
+      background: transparent; border: 1px solid #444; color: #888;
+      font-family: monospace; font-size: 12px; cursor: pointer;
+      letter-spacing: 1px;
+    }
+    #back-btn:hover { color: #fff; border-color: #888; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+  <div id="hub">
+    <h1>MINI GAMES</h1>
+    <button class="game-btn" data-game="pong">PONG</button>
+    <button class="game-btn" data-game="flappy">FLAPPY BIRD</button>
+    <button class="game-btn" data-game="snake">SNAKE</button>
+    <button class="game-btn" data-game="breakout">BREAKOUT</button>
+    <button class="game-btn" data-game="jump">JUMP GAME</button>
+  </div>
+  <div id="game-container">
+    <button id="back-btn">← BACK</button>
+    <canvas id="canvas"></canvas>
+  </div>
+
+  <script type="module">
+    const hub = document.getElementById('hub');
+    const gameContainer = document.getElementById('game-container');
+    const backBtn = document.getElementById('back-btn');
+    let currentStop = null;
+
+    document.querySelectorAll('.game-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const name = btn.dataset.game;
+        hub.style.display = 'none';
+        gameContainer.style.display = 'flex';
+        const mod = await import(`./${name}.js`);
+        currentStop = mod.start(document.getElementById('canvas'));
+      });
+    });
+
+    backBtn.addEventListener('click', () => {
+      currentStop?.();
+      currentStop = null;
+      gameContainer.style.display = 'none';
+      hub.style.display = 'flex';
+    });
+  </script>
+</body>
+</html>

@@ -28,7 +28,8 @@ export function stateMachine(states, initial) {
       _cur.enter?.(prev, data);
     },
 
-    update(dt) { _cur?.update?.(dt); },
+    update(dt)         { _cur?.update?.(dt); },
+    render(ctx, alpha) { _cur?.render?.(ctx, alpha); },
 
     // Transition only if condition is true; returns true if transition happened.
     tryGo(name, condition) {

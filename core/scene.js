@@ -19,7 +19,7 @@ export const scene = {
   },
 
   go(name, data) {
-    while (_stack.length) _stack.pop()?.def?.exit?.();
+    while (_stack.length) _stack.pop()?.def?.exit?.(data);
     const def = scene._registry.get(name);
     if (!def) throw new Error(`[scene] unknown: ${name}`);
     _stack.push({ name, def });

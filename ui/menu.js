@@ -26,13 +26,15 @@ export function menu({
   onCancel    = null,
 } = {}) {
   let _idx = 0;
-  let _cooldown = 0;    // prevent instant re-trigger
+  let _cooldown = 0;
 
-  const _totalH = items.length * itemH + (items.length - 1) * gap;
-  const _startY = y - _totalH / 2;
+  function _startY() {
+    const totalH = items.length * itemH + (items.length - 1) * gap;
+    return y - totalH / 2;
+  }
 
   function _itemRect(i) {
-    return { x: x - itemW / 2, y: _startY + i * (itemH + gap), w: itemW, h: itemH };
+    return { x: x - itemW / 2, y: _startY() + i * (itemH + gap), w: itemW, h: itemH };
   }
 
   const self = {
