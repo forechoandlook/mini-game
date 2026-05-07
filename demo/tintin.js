@@ -41,8 +41,8 @@ export function start(canvasEl) {
 
       // paddle movement
       const speed = 320;
-      if (input.key('ArrowLeft') || input.key('a')) paddleX -= speed * dt;
-      if (input.key('ArrowRight') || input.key('d')) paddleX += speed * dt;
+      if (input.pressed('left'))  paddleX -= speed * dt;
+      if (input.pressed('right')) paddleX += speed * dt;
       paddleX = Math.max(40, Math.min(W - 40, paddleX));
 
       // spawn
