@@ -1,5 +1,5 @@
 // Space Invaders
-import { canvas, input, audio, hud, menu, createGame, savedSignal,
+import { canvas, input, audio, hud, menu, createGame, stateMachine, savedSignal,
          pool, aabb, particles, timer } from '../index.js';
 
 const W = 400, H = 480;
@@ -19,10 +19,6 @@ function beep(freq, dur = 0.05, vol = 0.25) {
 }
 
 export function start(canvasEl) {
-  return createGame(canvasEl, {
-    width: W, height: H, pixelated: true, bgColor: '#06060e',
-    initial: 'menu',
-    states: (fsm) => {
   const best = savedSignal('invaders_best', 0);
 
   let player, enemies, score, lives, wave;
@@ -42,15 +38,12 @@ export function start(canvasEl) {
         enemies.push({ x: startX + c * (ENEMY_W + ENEMY_GAP_X),
                        y: startY + r * (ENEMY_H + ENEMY_GAP_Y),
                        w: ENEMY_W, h: ENEMY_H, row: r, alive: true });
-
     moveDir = 1;
     moveInterval = Math.max(0.06, 0.5 - wave * 0.05);
-    moveTimer = 0;
-    dropPending = false;
+    moveTimer = 0; dropPending = false;
     playerBullets.forEach(b => { b.active = false; });
     enemyBullets.forEach(b => { b.active = false; });
     timer.clear();
-    // enemy shooting: random bottom enemy fires periodically
     timer.every(Math.max(0.6, 1.8 - wave * 0.15), () => {
       const cols = [...new Set(enemies.filter(e => e.alive).map(e => e.x))];
       if (!cols.length) return;
@@ -76,61 +69,33 @@ export function start(canvasEl) {
 
   function activeEnemies() { return enemies.filter(e => e.alive); }
 
-  // ── menus ─────────────────────────────────────────────────────────────────
-  const mainMenu = menu({
-    items: [{ label: 'START', action: () => fsm.go('play') }],
-    x: W/2, y: H/2 + 20, itemW: 120, itemH: 26,
-    font: '14px monospace', colorNormal: '#555', colorActive: '#fff',
-  });
-
-  // ── render helpers ────────────────────────────────────────────────────────
   function drawPlayer(ctx) {
-    // ship body
     ctx.fillStyle = '#44ff88';
-    ctx.fillRect(player.x + 10, player.y, 8, 6);      // top fin
-    ctx.fillRect(player.x,      player.y + 6, PLAYER_W, 8);  // body
-    ctx.fillRect(player.x + 4,  player.y + 12, PLAYER_W - 8, 4); // base
-    // cannon
+    ctx.fillRect(player.x + 10, player.y, 8, 6);
+    ctx.fillRect(player.x,      player.y + 6, PLAYER_W, 8);
+    ctx.fillRect(player.x + 4,  player.y + 12, PLAYER_W - 8, 4);
     ctx.fillRect(player.x + 12, player.y - 4, 4, 6);
   }
 
   function drawEnemy(ctx, e) {
     const color = ROW_COLORS[e.row];
     ctx.fillStyle = color;
-    // simple alien silhouette
     ctx.fillRect(e.x + 4,  e.y,      ENEMY_W - 8, 6);
     ctx.fillRect(e.x,      e.y + 6,  ENEMY_W,     6);
     ctx.fillRect(e.x + 2,  e.y + 12, ENEMY_W - 4, 4);
-    // antennae
     ctx.fillRect(e.x + 2,  e.y - 2,  3, 3);
     ctx.fillRect(e.x + ENEMY_W - 5, e.y - 2, 3, 3);
-    // eyes
     ctx.fillStyle = '#000';
     ctx.fillRect(e.x + 6,  e.y + 4, 3, 4);
     ctx.fillRect(e.x + ENEMY_W - 9, e.y + 4, 3, 4);
   }
 
   function renderGame(ctx) {
-    // player
     drawPlayer(ctx);
-
-    // player bullets
-    playerBullets.forEach(b => {
-      ctx.fillStyle = '#88ffcc'; ctx.fillRect(b.x, b.y, b.w, b.h);
-    });
-
-    // enemies
+    playerBullets.forEach(b => { ctx.fillStyle = '#88ffcc'; ctx.fillRect(b.x, b.y, b.w, b.h); });
     for (const e of enemies) if (e.alive) drawEnemy(ctx, e);
-
-    // enemy bullets
-    enemyBullets.forEach(b => {
-      ctx.fillStyle = '#ff4444'; ctx.fillRect(b.x, b.y, b.w, b.h);
-    });
-
-    // particles
+    enemyBullets.forEach(b => { ctx.fillStyle = '#ff4444'; ctx.fillRect(b.x, b.y, b.w, b.h); });
     ps.render(ctx);
-
-    // HUD
     hud.text(ctx,  'SCORE', 8, 10, { font: '10px monospace', color: '#888' });
     hud.score(ctx, score,   8, 26, { digits: 6, font: '13px monospace', color: '#fff', align: 'left' });
     hud.pips(ctx, W - 8 - lives * 18, 10, 12, 6, 3, lives, { color: '#44ff88', bg: '#222' });
@@ -139,8 +104,15 @@ export function start(canvasEl) {
       hud.text(ctx, `BEST ${best.value}`, W - 8, 26, { font: '10px monospace', color: '#444', align: 'right' });
   }
 
-  // ── FSM ───────────────────────────────────────────────────────────────────
-  return {
+  let fsm;
+
+  const mainMenu = menu({
+    items: [{ label: 'START', action: () => fsm.go('play') }],
+    x: W/2, y: H/2 + 20, itemW: 120, itemH: 26,
+    font: '14px monospace', colorNormal: '#555', colorActive: '#fff',
+  });
+
+  fsm = stateMachine({
     menu: {
       update(dt)  { mainMenu.update(dt); },
       render(ctx) {
@@ -152,18 +124,14 @@ export function start(canvasEl) {
         hud.text(ctx, '← → move   SPACE shoot', W/2, H-24, { font: '10px monospace', color: '#444', align: 'center' });
       },
     },
-
     play: {
       enter()    { resetGame(); },
       update(dt) {
         if (input.down('pause')) { fsm.go('pause'); return; }
-
-        // player move
         if (input.pressed('left'))  player.x -= PLAYER_SPEED * dt;
         if (input.pressed('right')) player.x += PLAYER_SPEED * dt;
         player.x = Math.max(0, Math.min(W - PLAYER_W, player.x));
 
-        // player shoot
         if (input.down('jump') || input.down('action')) {
           if (playerBullets.active < 2) {
             const b = playerBullets.obtain();
@@ -172,7 +140,6 @@ export function start(canvasEl) {
           }
         }
 
-        // move player bullets
         playerBullets.update(b => {
           b.y -= 380 * dt;
           if (b.y + b.h < 0) return false;
@@ -186,7 +153,6 @@ export function start(canvasEl) {
           }
         });
 
-        // move enemy bullets
         timer.update(dt);
         enemyBullets.update(b => {
           b.y += 200 * dt;
@@ -202,12 +168,10 @@ export function start(canvasEl) {
 
         ps.update(dt);
 
-        // enemy movement
         const alive = activeEnemies();
         if (!alive.length) { resetWave(wave + 1); return; }
 
         moveTimer += dt;
-        // speed scales with fewer enemies
         const speed = moveInterval * (alive.length / (ENEMY_COLS * ENEMY_ROWS));
         if (moveTimer >= Math.max(0.06, speed)) {
           moveTimer = 0;
@@ -216,22 +180,17 @@ export function start(canvasEl) {
             moveDir *= -1; dropPending = false;
             beep(110, 0.08, 0.3);
           } else {
-            const step = 6;
-            for (const e of alive) e.x += step * moveDir;
+            for (const e of alive) e.x += 6 * moveDir;
             const minX = Math.min(...alive.map(e => e.x));
             const maxX = Math.max(...alive.map(e => e.x + e.w));
             if (minX <= 0 || maxX >= W) dropPending = true;
-            // march sound
             beep(moveDir > 0 ? 150 : 130, 0.04, 0.15);
           }
-
-          // enemy reaches bottom → game over
           if (alive.some(e => e.y + e.h >= PLAYER_Y)) { fsm.go('gameover'); return; }
         }
       },
       render(ctx) { canvas.clear('#06060e'); renderGame(ctx); },
     },
-
     pause: {
       update() { if (input.down('pause')) fsm.go('play'); },
       render(ctx) {
@@ -240,7 +199,6 @@ export function start(canvasEl) {
         hud.text(ctx, 'PAUSED', W/2, H/2, { font: 'bold 20px monospace', color: '#fff', align: 'center' });
       },
     },
-
     gameover: {
       enter()  { timer.clear(); if (score > best.value) best.value = score; },
       update() { if (input.down('action') || input.down('jump')) fsm.go('menu'); },
@@ -248,11 +206,15 @@ export function start(canvasEl) {
         canvas.clear('#06060e'); renderGame(ctx);
         hud.fade(ctx, 0.75);
         hud.text(ctx, 'GAME OVER',     W/2, H/2-22, { font: 'bold 22px monospace', color: '#ff4444', align: 'center' });
-        hud.text(ctx, `Score: ${score}`, W/2, H/2+6,  { font: '13px monospace', color: '#aaa', align: 'center' });
+        hud.text(ctx, `Score: ${score}`, W/2, H/2+6,  { font: '13px monadata', color: '#aaa', align: 'center' });
         hud.text(ctx, 'ENTER to menu',  W/2, H/2+30, { font: '11px monospace', color: '#888', align: 'center' });
       },
     },
-  };
-    },
+  }, 'menu');
+
+  return createGame(canvasEl, {
+    width: W, height: H, pixelated: true, bgColor: '#06060e',
+    update: dt  => fsm.update(dt),
+    render: ctx => fsm.render(ctx),
   });
 }

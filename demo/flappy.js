@@ -1,5 +1,5 @@
 // Flappy Bird
-import { canvas, input, audio, hud, fx, createGame, circleVsRect, savedSignal } from '../index.js';
+import { canvas, input, audio, hud, fx, createGame, stateMachine, circleVsRect, savedSignal } from '../index.js';
 
 const W = 320, H = 480;
 const GRAVITY = 1400;
@@ -13,10 +13,6 @@ function beep(freq, dur = 0.05, vol = 0.3) {
 }
 
 export function start(canvasEl) {
-  return createGame(canvasEl, {
-    width: W, height: H, pixelated: true, bgColor: '#1a2a4a',
-    initial: 'menu',
-    states: (fsm) => {
   const best = savedSignal('flappy_best', 0);
   let bird = {}, pipes = [], score = 0;
   let spawnTimer = 0, flashTimer = 0;
@@ -28,10 +24,7 @@ export function start(canvasEl) {
     flashTimer = 0;
   }
 
-  function tryJump() {
-    bird.vy = JUMP_VY;
-    beep(660, 0.06);
-  }
+  function tryJump() { bird.vy = JUMP_VY; beep(660, 0.06); }
 
   function tapPressed() {
     return input.down('jump') || input.down('action') || input.mouse.justDown.value;
@@ -69,7 +62,7 @@ export function start(canvasEl) {
     ctx.fillStyle = '#111'; ctx.beginPath(); ctx.arc(bx + 5, by - 3, 1.5, 0, Math.PI * 2); ctx.fill();
   }
 
-  return {
+  const fsm = stateMachine({
     menu: {
       update() { if (tapPressed()) fsm.go('play'); },
       render(ctx) {
@@ -79,29 +72,24 @@ export function start(canvasEl) {
         if (best.value > 0) hud.text(ctx, `BEST: ${best.value}`, W / 2, 232, { font: '13px monospace', color: '#ffcc00', align: 'center' });
       },
     },
-
     play: {
       enter()    { resetGame(); },
       update(dt) {
         if (tapPressed()) tryJump();
-
         bird.vy += GRAVITY * dt;
         bird.y  += bird.vy * dt;
         if (bird.y - BIRD_R < 0) { bird.y = BIRD_R; bird.vy = 0; }
-
         if (bird.y + BIRD_R >= H) {
           bird.y = H - BIRD_R;
           if (score > best.value) best.value = score;
           flashTimer = 0.3; beep(180, 0.25, 0.5); fsm.go('dead'); return;
         }
-
         spawnTimer -= dt;
         if (spawnTimer <= 0) { spawnPipe(); spawnTimer = SPAWN_INTERVAL; }
-
         for (const p of pipes) {
           p.x -= PIPE_SPEED * dt;
           if (!p.scored && p.x + PIPE_W < bird.x) { p.scored = true; score++; beep(880, 0.04, 0.2); }
-          if (circleVsRect(bird, { x: p.x, y: 0,               w: PIPE_W, h: p.topH }) ||
+          if (circleVsRect(bird, { x: p.x, y: 0,                w: PIPE_W, h: p.topH }) ||
               circleVsRect(bird, { x: p.x, y: p.topH + PIPE_GAP, w: PIPE_W, h: H    })) {
             if (score > best.value) best.value = score;
             flashTimer = 0.3; beep(180, 0.25, 0.5); fsm.go('dead'); return;
@@ -114,7 +102,6 @@ export function start(canvasEl) {
         hud.score(ctx, score, W / 2, 48, { digits: 1, font: 'bold 28px monospace', color: '#fff', align: 'center' });
       },
     },
-
     dead: {
       update(dt) {
         flashTimer -= dt;
@@ -128,13 +115,17 @@ export function start(canvasEl) {
           fx.flash(ctx, flashTimer, 0.3, { color: '#fff' });
         } else {
           hud.fade(ctx, 0.55);
-          hud.text(ctx, 'GAME OVER',                    W / 2, H / 2 - 32, { font: 'bold 22px monospace', color: '#fff', align: 'center' });
+          hud.text(ctx, 'GAME OVER',                         W / 2, H / 2 - 32, { font: 'bold 22px monospace', color: '#fff', align: 'center' });
           hud.text(ctx, `Score: ${score}  Best: ${best.value}`, W / 2, H / 2 + 2,  { font: '14px monospace',      color: '#aaa', align: 'center' });
-          hud.text(ctx, 'TAP to restart',               W / 2, H / 2 + 28, { font: '13px monospace',      color: '#888', align: 'center' });
+          hud.text(ctx, 'TAP to restart',                    W / 2, H / 2 + 28, { font: '13px monospace',      color: '#888', align: 'center' });
         }
       },
     },
-  };
-    },
+  }, 'menu');
+
+  return createGame(canvasEl, {
+    width: W, height: H, pixelated: true, bgColor: '#1a2a4a',
+    update: dt  => fsm.update(dt),
+    render: ctx => fsm.render(ctx),
   });
 }

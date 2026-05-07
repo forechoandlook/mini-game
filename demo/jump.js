@@ -1,5 +1,6 @@
 // Infinite Jump Game — dodge obstacles, collect coins
-import { canvas, input, audio, hud, fx, createGame, body, applyGravity, move, aabb, circleVsRect, savedSignal } from '../index.js';
+import { canvas, input, audio, hud, fx, createGame, stateMachine,
+         body, applyGravity, move, aabb, circleVsRect, savedSignal } from '../index.js';
 
 const W = 400, H = 300;
 const GROUND_Y = H - 40;
@@ -15,10 +16,6 @@ function beep(freq, dur = 0.05, vol = 0.25) {
 }
 
 export function start(canvasEl) {
-  return createGame(canvasEl, {
-    width: W, height: H, pixelated: true, bgColor: '#1a1a2e',
-    initial: 'menu',
-    states: (fsm) => {
   const best = savedSignal('jump_best', 0);
   let player, obstacles, coins, score, speed;
   let spawnTimer = 0, coinTimer = 0, distance = 0;
@@ -71,7 +68,7 @@ export function start(canvasEl) {
     hud.text(ctx, `best: ${best.value}`, W - 8, 22, { font: '11px monospace', color: '#555', align: 'right' });
   }
 
-  return {
+  const fsm = stateMachine({
     menu: {
       update()    { if (tapPressed()) fsm.go('play'); },
       render(ctx) {
@@ -81,16 +78,13 @@ export function start(canvasEl) {
         if (best.value > 0) hud.text(ctx, `BEST: ${best.value}`, W / 2, H / 2 + 28, { font: '13px monospace', color: '#ffcc00', align: 'center' });
       },
     },
-
     play: {
       enter()    { resetGame(); },
       update(dt) {
         bgX -= speed * 0.3 * dt;
         if (tapPressed()) tryJump();
-
         applyGravity(player, dt);
         move(player, dt, [GROUND_RECT]);
-
         distance += speed * dt;
         speed = SPEED_INIT + distance * 0.04;
         score = Math.floor(distance / 10);
@@ -125,7 +119,6 @@ export function start(canvasEl) {
       },
       render(ctx) { renderGame(ctx); },
     },
-
     gameover: {
       update(dt) {
         bgX -= speed * 0.3 * dt;
@@ -138,13 +131,17 @@ export function start(canvasEl) {
           fx.flash(ctx, deathFlash, 0.35, { color: '#ff5050' });
         } else {
           hud.fade(ctx, 0.6);
-          hud.text(ctx, 'GAME OVER',                    W / 2, H / 2 - 22, { font: 'bold 20px monospace', color: '#ff4444', align: 'center' });
+          hud.text(ctx, 'GAME OVER',                         W / 2, H / 2 - 22, { font: 'bold 20px monospace', color: '#ff4444', align: 'center' });
           hud.text(ctx, `Score: ${score}  Best: ${best.value}`, W / 2, H / 2 + 6,  { font: '13px monospace',      color: '#aaa',    align: 'center' });
-          hud.text(ctx, 'SPACE to menu',                W / 2, H / 2 + 30, { font: '12px monospace',      color: '#888',    align: 'center' });
+          hud.text(ctx, 'SPACE to menu',                     W / 2, H / 2 + 30, { font: '12px monospace',      color: '#888',    align: 'center' });
         }
       },
     },
-  };
-    },
+  }, 'menu');
+
+  return createGame(canvasEl, {
+    width: W, height: H, pixelated: true, bgColor: '#1a1a2e',
+    update: dt  => fsm.update(dt),
+    render: ctx => fsm.render(ctx),
   });
 }

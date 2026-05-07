@@ -1,20 +1,20 @@
 // Tetris
-import { canvas, input, audio, hud, menu, createGame, savedSignal, math } from '../index.js';
+import { canvas, input, audio, hud, menu, createGame, stateMachine, savedSignal, math } from '../index.js';
 
 const COLS = 10, ROWS = 20, CELL = 24;
-const W = COLS * CELL + 120, H = ROWS * CELL; // 360 × 480
-const SX = COLS * CELL + 8;                    // sidebar x
+const W = COLS * CELL + 120, H = ROWS * CELL;
+const SX = COLS * CELL + 8;
 
 const COLORS = ['','#00e5ff','#ffd600','#aa00ff','#00c853','#ff1744','#2979ff','#ff6d00'];
 const SHAPES = [
   null,
-  [[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]], // I
-  [[0,1,1,0],[0,1,1,0],[0,0,0,0],[0,0,0,0]], // O
-  [[0,1,0,0],[1,1,1,0],[0,0,0,0],[0,0,0,0]], // T
-  [[0,1,1,0],[1,1,0,0],[0,0,0,0],[0,0,0,0]], // S
-  [[1,1,0,0],[0,1,1,0],[0,0,0,0],[0,0,0,0]], // Z
-  [[1,0,0,0],[1,1,1,0],[0,0,0,0],[0,0,0,0]], // J
-  [[0,0,1,0],[1,1,1,0],[0,0,0,0],[0,0,0,0]], // L
+  [[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
+  [[0,1,1,0],[0,1,1,0],[0,0,0,0],[0,0,0,0]],
+  [[0,1,0,0],[1,1,1,0],[0,0,0,0],[0,0,0,0]],
+  [[0,1,1,0],[1,1,0,0],[0,0,0,0],[0,0,0,0]],
+  [[1,1,0,0],[0,1,1,0],[0,0,0,0],[0,0,0,0]],
+  [[1,0,0,0],[1,1,1,0],[0,0,0,0],[0,0,0,0]],
+  [[0,0,1,0],[1,1,1,0],[0,0,0,0],[0,0,0,0]],
 ];
 const LINE_PTS = [0, 100, 300, 500, 800];
 
@@ -23,10 +23,6 @@ function beep(freq, dur = 0.05, vol = 0.2) {
 }
 
 export function start(canvasEl) {
-  return createGame(canvasEl, {
-    width: W, height: H, pixelated: true, bgColor: '#0c0c18',
-    initial: 'menu',
-    states: (fsm) => {
   const best = savedSignal('tetris_best', 0);
   let board, piece, px, py, shape, nextType;
   let score, lines, level, dropT, dropI;
@@ -71,16 +67,12 @@ export function start(canvasEl) {
     for (let r = 0; r < ROWS; r++)
       if (board[r].every(v => v)) full.push(r);
 
-    if (full.length) {
-      flashRows = full; flashT = 0.12; beep(880, 0.1, 0.3);
-    } else {
-      beep(200, 0.06); nextPiece();
-    }
+    if (full.length) { flashRows = full; flashT = 0.12; beep(880, 0.1, 0.3); }
+    else             { beep(200, 0.06); nextPiece(); }
   }
 
   function applyClears() {
     const n = flashRows.length;
-    // splice from bottom up so earlier indices don't shift when later rows are removed
     for (const r of [...flashRows].sort((a, b) => b - a)) board.splice(r, 1);
     while (board.length < ROWS) board.unshift(new Array(COLS).fill(0));
     lines += n; level = 1 + Math.floor(lines / 10);
@@ -110,7 +102,6 @@ export function start(canvasEl) {
     nextType = rng(); spawn(rng());
   }
 
-  // ── render ────────────────────────────────────────────────────────────────
   function drawCell(ctx, x, y, color, a = 1) {
     ctx.globalAlpha = a;
     ctx.fillStyle = color;
@@ -155,9 +146,7 @@ export function start(canvasEl) {
       for (const r of flashRows) ctx.fillRect(0, r*CELL, COLS*CELL, CELL);
     }
 
-    // sidebar
     ctx.fillStyle = '#0c0c18'; ctx.fillRect(COLS*CELL, 0, 120, H);
-
     hud.text(ctx, 'NEXT', SX, 10, { font: '10px monospace', color: '#666' });
     drawShape(ctx, SHAPES[nextType], SX + 4, 22, COLORS[nextType], 1, 16);
 
@@ -169,21 +158,22 @@ export function start(canvasEl) {
     hud.text(ctx,  'LEVEL', SX, 178, { font: '10px monospace', color: '#666' });
     hud.score(ctx, level,   R, 194,  { digits: 2, font: '11px monospace', color: '#aaa' });
     if (best.value > 0) {
-      hud.text(ctx,  'BEST',      SX, 222, { font: '10px monospace', color: '#444' });
-      hud.score(ctx, best.value,  R,  238, { digits: 7, font: '11px monospace', color: '#555' });
+      hud.text(ctx,  'BEST',     SX, 222, { font: '10px monospace', color: '#444' });
+      hud.score(ctx, best.value, R,  238, { digits: 7, font: '11px monospace', color: '#555' });
     }
     const tips = ['←→ move','↑  rotate','↓  soft','SPC hard','ESC pause'];
     tips.forEach((t, i) => hud.text(ctx, t, SX, H - 90 + i * 18, { font: '9px monospace', color: '#333' }));
   }
 
-  // ── FSM ───────────────────────────────────────────────────────────────────
+  let fsm;
+
   const mainMenu = menu({
     items: [{ label: 'START', action: () => fsm.go('play') }],
     x: W / 2, y: H / 2 + 20, itemW: 120, itemH: 26,
     font: '14px monospace', colorNormal: '#555', colorActive: '#fff',
   });
 
-  return {
+  fsm = stateMachine({
     menu: {
       update(dt)  { mainMenu.update(dt); },
       render(ctx) {
@@ -194,24 +184,16 @@ export function start(canvasEl) {
         mainMenu.render(ctx);
       },
     },
-
     play: {
       enter()    { resetGame(); },
       update(dt) {
         if (input.down('pause')) { fsm.go('pause'); return; }
+        if (flashRows) { flashT -= dt; if (flashT <= 0) applyClears(); return; }
 
-        if (flashRows) {
-          flashT -= dt;
-          if (flashT <= 0) applyClears();
-          return;
-        }
-
-        // DAS — input.held handles first-delay + repeat automatically
         if (input.held('left',  dt) && valid(shape, px - 1, py)) { px--; beep(300, 0.03); }
         if (input.held('right', dt) && valid(shape, px + 1, py)) { px++; beep(300, 0.03); }
-
         if (input.down('up') || input.down('action')) tryRotate();
-        if (input.down(' ')) { hardDrop(); return; }  // Space only, not ArrowUp
+        if (input.down(' ')) { hardDrop(); return; }
 
         const soft = input.pressed('down');
         dropT += dt;
@@ -223,28 +205,30 @@ export function start(canvasEl) {
       },
       render(ctx) { canvas.clear('#08080f'); renderGame(ctx); },
     },
-
     pause: {
       update() { if (input.down('pause')) fsm.go('play'); },
       render(ctx) {
         canvas.clear('#08080f'); renderGame(ctx);
         hud.fade(ctx, 0.7);
-        hud.text(ctx, 'PAUSED',       COLS*CELL/2, H/2 - 14, { font: 'bold 20px monospace', color: '#fff',  align: 'center' });
+        hud.text(ctx, 'PAUSED',        COLS*CELL/2, H/2 - 14, { font: 'bold 20px monospace', color: '#fff',  align: 'center' });
         hud.text(ctx, 'ESC to resume', COLS*CELL/2, H/2 + 14, { font: '11px monospace',      color: '#888', align: 'center' });
       },
     },
-
     gameover: {
       update() { if (input.down('action') || input.down(' ')) fsm.go('menu'); },
       render(ctx) {
         canvas.clear('#08080f'); renderGame(ctx);
         hud.fade(ctx, 0.75);
-        hud.text(ctx, 'GAME OVER',    COLS*CELL/2, H/2 - 22, { font: 'bold 20px monospace', color: '#ff1744', align: 'center' });
+        hud.text(ctx, 'GAME OVER',     COLS*CELL/2, H/2 - 22, { font: 'bold 20px monospace', color: '#ff1744', align: 'center' });
         hud.text(ctx, `Score: ${score}`, COLS*CELL/2, H/2 + 6,  { font: '13px monospace', color: '#aaa', align: 'center' });
         hud.text(ctx, 'ENTER to menu', COLS*CELL/2, H/2 + 30, { font: '11px monospace', color: '#888', align: 'center' });
       },
     },
-  };
-    },
+  }, 'menu');
+
+  return createGame(canvasEl, {
+    width: W, height: H, pixelated: true, bgColor: '#0c0c18',
+    update: dt  => fsm.update(dt),
+    render: ctx => fsm.render(ctx),
   });
 }

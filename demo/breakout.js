@@ -1,5 +1,5 @@
 // Breakout / 打砖块
-import { canvas, input, audio, hud, menu, createGame,
+import { canvas, input, audio, hud, menu, createGame, stateMachine,
          circleVsRect, circleRectMtv, moveCircle, bouncePaddle, savedSignal, math } from '../index.js';
 
 const W = 400, H = 480;
@@ -12,11 +12,10 @@ const BRICK_OFF_X = 13, BRICK_OFF_Y = 50;
 const BRICK_GAP = 2;
 const ROW_COLORS = ['#ff4444', '#ff8844', '#ffcc44', '#88dd44', '#44aaff'];
 
-// 三面墙壁，ball 初始化为 restitution:1（完美弹射）
 const WALLS = [
-  { x: -1, y: -1,  w: 1,     h: H + 2 }, // left
-  { x: W,  y: -1,  w: 1,     h: H + 2 }, // right
-  { x: -1, y: -1,  w: W + 2, h: 1     }, // top
+  { x: -1, y: -1,  w: 1,     h: H + 2 },
+  { x: W,  y: -1,  w: 1,     h: H + 2 },
+  { x: -1, y: -1,  w: W + 2, h: 1     },
 ];
 
 function beep(freq, dur = 0.06, vol = 0.3) {
@@ -24,10 +23,6 @@ function beep(freq, dur = 0.06, vol = 0.3) {
 }
 
 export function start(canvasEl) {
-  return createGame(canvasEl, {
-    width: W, height: H, pixelated: true, bgColor: '#0a0a14',
-    initial: 'menu',
-    states: (fsm) => {
   const best = savedSignal('breakout_best', 0);
   let paddle, ball, bricks, score, lives;
 
@@ -50,12 +45,6 @@ export function start(canvasEl) {
     score = 0; lives = 3;
   }
 
-  const actionMenu = menu({
-    items: [{ label: 'START', action: () => fsm.go('play') }],
-    x: W / 2, y: H / 2 + 60, itemW: 120, itemH: 24,
-    font: '15px monospace', colorNormal: '#555', colorActive: '#fff',
-  });
-
   function renderGame(ctx) {
     for (const b of bricks) {
       if (!b.alive) continue;
@@ -70,7 +59,15 @@ export function start(canvasEl) {
     hud.pips(ctx, W - 8 - lives * 14, H - 16, 10, 4, 3, lives, { color: '#ff4444', bg: '#333' });
   }
 
-  return {
+  let fsm;
+
+  const actionMenu = menu({
+    items: [{ label: 'START', action: () => fsm.go('play') }],
+    x: W / 2, y: H / 2 + 60, itemW: 120, itemH: 24,
+    font: '15px monospace', colorNormal: '#555', colorActive: '#fff',
+  });
+
+  fsm = stateMachine({
     menu: {
       update(dt)  { actionMenu.update(dt); },
       render(ctx) {
@@ -80,27 +77,20 @@ export function start(canvasEl) {
         actionMenu.render(ctx);
       },
     },
-
     play: {
       enter()    { resetGame(); },
       update(dt) {
         if (input.down('pause')) { fsm.go('pause'); return; }
-
-        // paddle
         paddle.x = input.mouse.x.value - PADDLE_W / 2;
         if (input.pressed('left'))  paddle.x -= 380 * dt;
         if (input.pressed('right')) paddle.x += 380 * dt;
         paddle.x = math.clamp(paddle.x, 0, W - PADDLE_W);
 
-        // wall bounces via moveCircle — hits.length > 0 means a wall was touched
         const hits = moveCircle(ball, dt, WALLS);
         if (hits.length) beep(440);
-
-        // paddle: curved-surface bounce, ball must be moving downward
         if (ball.vy > 0 && bouncePaddle(ball, paddle, { direction: 'up', spread: 1.1, minNormal: 50 }))
           beep(330, 0.05);
 
-        // bricks: kill + bounce via circleRectMtv normal reflection
         for (const b of bricks) {
           if (!b.alive || !circleVsRect(ball, b)) continue;
           b.alive = false;
@@ -114,7 +104,6 @@ export function start(canvasEl) {
           break;
         }
 
-        // bottom — lose life
         if (ball.y - BALL_R > H) {
           lives--; beep(220, 0.2, 0.5);
           if (lives <= 0) {
@@ -136,16 +125,13 @@ export function start(canvasEl) {
       },
       render(ctx) { renderGame(ctx); },
     },
-
     pause: {
       update() { if (input.down('pause')) fsm.go('play'); },
       render(ctx) {
-        renderGame(ctx);
-        hud.fade(ctx, 0.5);
+        renderGame(ctx); hud.fade(ctx, 0.5);
         hud.text(ctx, 'PAUSED', W / 2, H / 2, { font: '18px monospace', color: '#fff', align: 'center' });
       },
     },
-
     gameover: {
       update(dt)  { actionMenu.update(dt); },
       render(ctx) {
@@ -155,7 +141,6 @@ export function start(canvasEl) {
         actionMenu.render(ctx);
       },
     },
-
     win: {
       update(dt)  { actionMenu.update(dt); },
       render(ctx) {
@@ -165,7 +150,11 @@ export function start(canvasEl) {
         actionMenu.render(ctx);
       },
     },
-  };
-    },
+  }, 'menu');
+
+  return createGame(canvasEl, {
+    width: W, height: H, pixelated: true, bgColor: '#0a0a14',
+    update: dt  => fsm.update(dt),
+    render: ctx => fsm.render(ctx),
   });
 }

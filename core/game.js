@@ -1,27 +1,28 @@
-// createGame — canvas + input + stateMachine + loop, all in one call.
+// createGame — canvas + input + loop.
 //
-// Optional `preload` async function runs before the loop starts.
-// While loading, a built-in progress bar is shown automatically.
+// Manages canvas init, input, optional preload (with progress bar), and the
+// game loop. State management is intentionally left to the caller — use a plain
+// variable, a switch, or import stateMachine from utils/fsm.js as you prefer.
 //
 //   export function start(canvasEl) {
+//     let state = 'menu';
 //     return createGame(canvasEl, {
 //       width: 480, height: 270, pixelated: true, bgColor: '#1a1a2e',
-//       preload: async () => {
-//         assets.add('tiles',  'img/tiles.png');
-//         assets.add('player', 'img/mario.png');
-//         assets.add('bgm',    'audio/theme.ogg', 'audio');
-//         await assets.load();           // loadProgress.value updated automatically
-//       },
-//       initial: 'menu',
-//       states: (fsm) => ({ ... }),
+//       preload: () => assets.load(),
+//       update(dt) { if (state === 'menu') { ... } },
+//       render(ctx) { ... },
 //     });
 //   }
+//
+// With FSM (optional):
+//   import { stateMachine } from '../utils/fsm.js';
+//   const fsm = stateMachine({ play: { update, render }, ... }, 'play');
+//   return createGame(canvasEl, { update: dt => fsm.update(dt), render: ctx => fsm.render(ctx) });
 
 import { canvas }       from './canvas.js';
 import { input }        from './input.js';
 import { loop }         from './loop.js';
 import { loadProgress } from './assets.js';
-import { stateMachine } from '../utils/fsm.js';
 
 export function createGame(canvasEl, {
   width,
@@ -29,37 +30,27 @@ export function createGame(canvasEl, {
   pixelated = true,
   bgColor   = '#000',
   preload   = null,
-  states,
-  initial,
+  update,
+  render,
 } = {}) {
   canvas.init(canvasEl, { width, height, pixelated });
   input.init(canvasEl);
 
-  let fsm;
-  const fsmProxy = new Proxy({}, {
-    get: (_, k) => (...args) => fsm[k](...args),
-  });
-
   function _startLoop() {
-    const resolved = typeof states === 'function' ? states(fsmProxy) : (states ?? {});
-    fsm = stateMachine(resolved, initial);
     loop.start(
-      dt => { fsm.update(dt); input.flush(); },
-      ()  => { canvas.clear(bgColor); fsm.render(canvas.ctx); },
+      dt  => { update?.(dt); input.flush(); },
+      ()  => { canvas.clear(bgColor); render?.(canvas.ctx); },
     );
   }
 
   if (preload) {
-    // Render loading bar via rAF until preload resolves
     let _raf;
     const _tick = () => {
       const p = loadProgress.value;
       const ctx = canvas.ctx, w = canvas.w, h = canvas.h;
       canvas.clear(bgColor);
-      // bar track
       ctx.fillStyle = '#333';
       ctx.fillRect(w * 0.2, h / 2 - 5, w * 0.6, 10);
-      // bar fill
       ctx.fillStyle = '#fff';
       ctx.fillRect(w * 0.2, h / 2 - 5, w * 0.6 * p, 10);
       ctx.fillStyle = '#888';
@@ -69,11 +60,7 @@ export function createGame(canvasEl, {
       _raf = requestAnimationFrame(_tick);
     };
     _raf = requestAnimationFrame(_tick);
-
-    preload().then(() => {
-      cancelAnimationFrame(_raf);
-      _startLoop();
-    });
+    preload().then(() => { cancelAnimationFrame(_raf); _startLoop(); });
   } else {
     _startLoop();
   }

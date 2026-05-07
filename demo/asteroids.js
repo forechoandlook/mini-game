@@ -1,8 +1,7 @@
 // Asteroids — vector graphics, pool, screen wrap
-import { canvas, input, audio, hud, menu, createGame, savedSignal,
+import { canvas, input, audio, hud, menu, createGame, stateMachine, savedSignal,
          pool, circleVsCircle, particles, math, tweens,
-         draw, fx, body, stepRotation, applyAngularImpulse } from '../index.js';
-
+         draw, body, stepRotation, applyAngularImpulse } from '../index.js';
 
 const W = 480, H = 360;
 const TAU = Math.PI * 2;
@@ -11,8 +10,6 @@ function beep(freq, dur = 0.05, vol = 0.2) {
   audio.tone(freq, { type: 'square', duration: dur, volume: vol });
 }
 
-
-// generate random asteroid polygon (8–12 points with slight noise)
 function makeAsteroidAngles(n = 10) {
   return Array.from({ length: n }, (_, i) => {
     const base = (i / n) * TAU;
@@ -21,21 +18,14 @@ function makeAsteroidAngles(n = 10) {
 }
 
 export function start(canvasEl) {
-  return createGame(canvasEl, {
-    width: W, height: H, pixelated: false, bgColor: '#06060e', // smooth for vectors
-    initial: 'menu',
-    states: (fsm) => {
   const best = savedSignal('asteroids_best', 0);
 
-  let ship, bullets, asteroids, score, lives, level, invincible;
-  let ps;
+  let ship, score, lives, level, invincible, ps;
 
-  // object pools
   const bulletPool   = pool(8,  () => ({ x:0, y:0, vx:0, vy:0, r:2, life:0, active:false }),
-    o => { o.x = 0; o.y = 0; o.vx = 0; o.vy = 0; o.life = 0; });          // r stays 2
-  // asteroids are body() instances — angle + angularVelocity come for free
+    o => { o.x = 0; o.y = 0; o.vx = 0; o.vy = 0; o.life = 0; });
   const asteroidPool = pool(30,
-    () => body({ angularDamping: 1 }), // angularDamping=1: no spin decay in space
+    () => body({ angularDamping: 1 }),
     o  => { o.x=0; o.y=0; o.vx=0; o.vy=0; o.r=0; o.angle=0; o.angularVelocity=0; o.angles=[]; o.tier=0; });
 
   function spawnAsteroid(x, y, tier, vx = 0, vy = 0) {
@@ -56,7 +46,6 @@ export function start(canvasEl) {
 
   function spawnWave(n) {
     for (let i = 0; i < n; i++) {
-      // spawn away from ship center
       let x, y;
       do { x = Math.random() * W; y = Math.random() * H; }
       while (math.dist(x, y, ship.x, ship.y) < 120);
@@ -112,29 +101,22 @@ export function start(canvasEl) {
     bulletPool.forEach(b => draw.circle(ctx, b.x, b.y, b.r, { color: '#ffee88' }));
     asteroidPool.forEach(a => draw.poly(ctx, a.x, a.y, a.angles, a.r, a.angle,
       { color: `hsl(${[0,40,60,80][a.tier-1]}, 60%, 70%)` }));
-
-    // ship
-    const shipAlpha = math.flicker(invincible);
-    drawShip(ctx, shipAlpha);
-
-    // particles
+    drawShip(ctx, math.flicker(invincible));
     ps.render(ctx);
-
-    // HUD
     hud.score(ctx, score, 8, 22, { digits: 6, font: '13px monospace', color: '#fff', align: 'left' });
     hud.pips(ctx, W - 8 - lives * 18, 8, 12, 6, 3, lives, { color: '#88ccff', bg: '#222' });
     hud.text(ctx, `WAVE ${level}`, W/2, 18, { font: '10px monospace', color: '#555', align: 'center' });
   }
 
-  // ── menus ─────────────────────────────────────────────────────────────────
+  let fsm;
+
   const mainMenu = menu({
     items: [{ label: 'START', action: () => fsm.go('play') }],
     x: W/2, y: H/2 + 20, itemW: 120, itemH: 26,
     font: '14px monospace', colorNormal: '#555', colorActive: '#fff',
   });
 
-  // ── FSM ───────────────────────────────────────────────────────────────────
-  return {
+  fsm = stateMachine({
     menu: {
       update(dt)  { mainMenu.update(dt); },
       render(ctx) {
@@ -146,54 +128,42 @@ export function start(canvasEl) {
         hud.text(ctx, '← → turn   ↑ thrust   SPACE shoot', W/2, H-24, { font: '10px monospace', color: '#444', align: 'center' });
       },
     },
-
     play: {
       enter()    { resetGame(); },
       update(dt) {
         if (input.down('pause')) { fsm.go('pause'); return; }
-
         tweens.update(dt);
 
-        // ship controls
-        const turnSpeed = 2.8;
-        if (input.pressed('left'))  ship.angle -= turnSpeed * dt;
-        if (input.pressed('right')) ship.angle += turnSpeed * dt;
-
+        if (input.pressed('left'))  ship.angle -= 2.8 * dt;
+        if (input.pressed('right')) ship.angle += 2.8 * dt;
         ship.thrust = input.pressed('up');
         if (ship.thrust) {
-          const thrust = 260;
-          ship.vx += Math.cos(ship.angle) * thrust * dt;
-          ship.vy += Math.sin(ship.angle) * thrust * dt;
+          ship.vx += Math.cos(ship.angle) * 260 * dt;
+          ship.vy += Math.sin(ship.angle) * 260 * dt;
         }
-        // drag
         ship.vx = math.expDecay(ship.vx, 0.3, dt);
         ship.vy = math.expDecay(ship.vy, 0.3, dt);
-
         ship.x += ship.vx * dt; ship.y += ship.vy * dt;
         math.wrapPos(ship, W, H);
 
-        // shoot
         ship.shootTimer -= dt;
         if ((input.pressed('jump') || input.pressed('action')) && ship.shootTimer <= 0) {
           const b = bulletPool.obtain();
           if (b) {
-            const spd = 520;
             b.x = ship.x + Math.cos(ship.angle) * 18;
             b.y = ship.y + Math.sin(ship.angle) * 18;
-            b.vx = ship.vx + Math.cos(ship.angle) * spd;
-            b.vy = ship.vy + Math.sin(ship.angle) * spd;
+            b.vx = ship.vx + Math.cos(ship.angle) * 520;
+            b.vy = ship.vy + Math.sin(ship.angle) * 520;
             b.life = 1.2;
             beep(660, 0.05, 0.15);
           }
           ship.shootTimer = 0.18;
         }
 
-        // move bullets
         bulletPool.update(b => {
           b.x += b.vx * dt; b.y += b.vy * dt;
           math.wrapPos(b, W, H); b.life -= dt;
           if (b.life <= 0) return false;
-          // bullet vs asteroid
           let hit = false;
           asteroidPool.forEach(a => {
             if (hit) return;
@@ -205,10 +175,9 @@ export function start(canvasEl) {
             score += pts[a.tier]; if (score > best.value) best.value = score;
             beep(220 + a.tier * 80, 0.08);
             if (a.tier < 3) {
-              // child asteroids inherit parent's spin + bullet impact torque
-              const torque = (Math.random() - 0.5) * 4;
               spawnAsteroid(a.x, a.y, a.tier + 1, a.vx + b.vx * 0.1, a.vy + b.vy * 0.1);
               spawnAsteroid(a.x, a.y, a.tier + 1, a.vx - b.vx * 0.1, a.vy - b.vy * 0.1);
+              const torque = (Math.random() - 0.5) * 4;
               asteroidPool.forEach(child => {
                 if (child.active && child.x === a.x && child.y === a.y)
                   applyAngularImpulse(child, torque);
@@ -219,25 +188,22 @@ export function start(canvasEl) {
           if (hit) return false;
         });
 
-        // move asteroids — stepRotation integrates angularVelocity → angle
         asteroidPool.update(a => {
           a.x += a.vx * dt; a.y += a.vy * dt;
           stepRotation(a, dt);
           math.wrapPos(a, W, H);
         });
 
-        // ship vs asteroids
         invincible -= dt;
         if (invincible <= 0) {
           asteroidPool.forEach(a => {
             if (invincible < 0 && circleVsCircle(ship, a)) {
-              explodeShip(); invincible = 99; // prevent multi-hit
+              explodeShip(); invincible = 99;
             }
           });
-          if (invincible > 2) invincible = 2.5; // restore normal invincibility after hit
+          if (invincible > 2) invincible = 2.5;
         }
 
-        // next wave
         if (asteroidPool.active === 0) {
           level++; spawnWave(3 + level);
           beep(440, 0.1, 0.2); beep(660, 0.1, 0.2);
@@ -247,7 +213,6 @@ export function start(canvasEl) {
       },
       render(ctx) { canvas.clear('#06060e'); renderGame(ctx); },
     },
-
     pause: {
       update() { if (input.down('pause')) fsm.go('play'); },
       render(ctx) {
@@ -256,7 +221,6 @@ export function start(canvasEl) {
         hud.text(ctx, 'PAUSED', W/2, H/2, { font: 'bold 20px monospace', color: '#fff', align: 'center' });
       },
     },
-
     gameover: {
       update() { if (input.down('action') || input.down('jump')) fsm.go('menu'); },
       render(ctx) {
@@ -267,7 +231,11 @@ export function start(canvasEl) {
         hud.text(ctx, 'ENTER to menu',  W/2, H/2+30, { font: '11px monospace', color: '#888', align: 'center' });
       },
     },
-  };
-    },
+  }, 'menu');
+
+  return createGame(canvasEl, {
+    width: W, height: H, pixelated: false, bgColor: '#06060e',
+    update: dt  => fsm.update(dt),
+    render: ctx => fsm.render(ctx),
   });
 }
