@@ -1,7 +1,7 @@
 // Unified input: keyboard + mouse/touch → signal-based frame snapshot
 // Every bindable state is a signal so UI/HUD can reactively read it.
 
-import { signal } from '../../mini-react/src/core.js';
+import { signal } from '../utils/signal.js';
 
 // ── key aliases ──────────────────────────────────────────────────────────────
 const ALIASES = {

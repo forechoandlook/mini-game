@@ -10,7 +10,7 @@
 //   cam.worldToScreen(wx, wy)             // → {x, y}
 //   cam.screenToWorld(sx, sy)             // → {x, y}
 
-import { signal } from '../../mini-react/src/core.js';
+import { signal } from '../../utils/signal.js';
 
 export function camera({
   w,                    // viewport width (canvas logical width)

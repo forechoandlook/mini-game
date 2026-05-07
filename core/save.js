@@ -3,7 +3,7 @@
 // load(key, def)  — JSON parse, return def on miss/error
 // savedSignal(key, def) — signal that auto-saves on write
 
-import { signal } from '../../mini-react/src/core.js';
+import { signal } from '../utils/signal.js';
 
 const PREFIX = 'mg_';
 

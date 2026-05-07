@@ -8,7 +8,7 @@
 //   d.isDone   → bool (all text revealed)
 //   d.advance()  → skip to end or close
 
-import { signal } from '../../mini-react/src/core.js';
+import { signal } from '../utils/signal.js';
 import { input, mouse } from '../core/input.js';
 
 export function dialog({

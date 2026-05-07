@@ -8,7 +8,7 @@
 //   assets.play('shot')           // fire-and-forget sfx via pool
 //   assets.play('bgm', { loop: true, volume: 0.5 })
 
-import { signal } from '../../mini-react/src/core.js';
+import { signal } from '../utils/signal.js';
 import { pool }   from './pool.js';
 
 export const loadProgress = signal(0);    // 0..1 reactive
