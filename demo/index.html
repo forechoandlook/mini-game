@@ -25,6 +25,34 @@
     }
     #back-btn:hover { color: #fff; border-color: #888; }
     canvas { display: block; }
+    .game-btn.locked { color: #ff69b4; border-color: #ff69b4; }
+    .game-btn.locked:hover { background: #1a0010; border-color: #ff9fd4; color: #ff9fd4; }
+    #pwd-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.85); backdrop-filter: blur(4px);
+      align-items: center; justify-content: center; z-index: 100;
+    }
+    #pwd-overlay.show { display: flex; }
+    #pwd-box {
+      background: #111; border: 1px solid #ff69b4;
+      padding: 36px 40px; display: flex; flex-direction: column; align-items: center; gap: 16px;
+    }
+    #pwd-box h2 { font-size: 16px; letter-spacing: 3px; color: #ff69b4; }
+    #pwd-box input {
+      width: 200px; padding: 10px; text-align: center;
+      background: #000; border: 1px solid #444; color: #fff;
+      font-family: monospace; font-size: 16px; letter-spacing: 4px;
+      outline: none;
+    }
+    #pwd-box input:focus { border-color: #ff69b4; }
+    #pwd-error { color: #f44; font-size: 12px; min-height: 16px; }
+    #pwd-ok {
+      padding: 10px 32px; background: #ff69b4; border: none;
+      color: #000; font-family: monospace; font-size: 13px; letter-spacing: 2px; cursor: pointer;
+    }
+    #pwd-ok:hover { background: #ff9fd4; }
+    #pwd-cancel { background: none; border: none; color: #555; font-family: monospace; font-size: 12px; cursor: pointer; }
+    #pwd-cancel:hover { color: #888; }
   </style>
 </head>
 <body>
@@ -40,6 +68,17 @@
     <button class="game-btn" data-game="mario">SUPER MARIO</button>
     <button class="game-btn" data-game="jump">JUMP GAME</button>
     <button class="game-btn" data-game="sprites">SPRITE DEMO</button>
+    <button class="game-btn locked" id="tintin-btn">🔒 TINTIN'S GAME</button>
+  </div>
+
+  <div id="pwd-overlay">
+    <div id="pwd-box">
+      <h2>TINTIN'S GAME</h2>
+      <input id="pwd-input" type="password" maxlength="20" placeholder="••••••" autocomplete="off" />
+      <div id="pwd-error"></div>
+      <button id="pwd-ok">ENTER</button>
+      <button id="pwd-cancel">cancel</button>
+    </div>
   </div>
   <div id="game-container">
     <button id="back-btn">← BACK</button>
@@ -50,17 +89,52 @@
     const hub = document.getElementById('hub');
     const gameContainer = document.getElementById('game-container');
     const backBtn = document.getElementById('back-btn');
+    const overlay = document.getElementById('pwd-overlay');
+    const pwdInput = document.getElementById('pwd-input');
+    const pwdError = document.getElementById('pwd-error');
+    const HASH = '6e8f79e50b21a639bb7c07d24edcbd6ed8f95b1aa782996831730abf51d75f70';
     let currentStop = null;
 
-    document.querySelectorAll('.game-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const name = btn.dataset.game;
-        hub.style.display = 'none';
-        gameContainer.style.display = 'flex';
-        const mod = await import(`./${name}.js`);
-        currentStop = mod.start(document.getElementById('canvas'));
-      });
+    async function sha256(str) {
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+      return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    async function launchGame(name) {
+      hub.style.display = 'none';
+      gameContainer.style.display = 'flex';
+      const mod = await import(`./${name}.js`);
+      currentStop = mod.start(document.getElementById('canvas'));
+    }
+
+    document.querySelectorAll('.game-btn:not(.locked)').forEach(btn => {
+      btn.addEventListener('click', () => launchGame(btn.dataset.game));
     });
+
+    document.getElementById('tintin-btn').addEventListener('click', () => {
+      pwdInput.value = '';
+      pwdError.textContent = '';
+      overlay.classList.add('show');
+      setTimeout(() => pwdInput.focus(), 50);
+    });
+
+    async function tryUnlock() {
+      const hash = await sha256(pwdInput.value);
+      if (hash === HASH) {
+        overlay.classList.remove('show');
+        sessionStorage.setItem('tintin_ok', '1');
+        launchGame('tintin');
+      } else {
+        pwdError.textContent = 'wrong password :(';
+        pwdInput.value = '';
+        pwdInput.focus();
+      }
+    }
+
+    document.getElementById('pwd-ok').addEventListener('click', tryUnlock);
+    pwdInput.addEventListener('keydown', e => { if (e.key === 'Enter') tryUnlock(); });
+    document.getElementById('pwd-cancel').addEventListener('click', () => overlay.classList.remove('show'));
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.classList.remove('show'); });
 
     backBtn.addEventListener('click', () => {
       currentStop?.();
